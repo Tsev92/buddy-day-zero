@@ -217,7 +217,7 @@ class Face(QWidget):
         cx,cy = 160.0,145.0
         path = QPainterPath()
         if self.mood == "speaking":
-            opening = 5 + 10*max(.15,min(1.0,self.audio_level or (.45+.35*math.sin(t*8)**2)))
+            opening = 2.5 + 19 * max(0.0, min(1.0, self.audio_level))
             p.setPen(Qt.NoPen); p.setBrush(mouth_color)
             p.drawRoundedRect(QRectF(cx-12,cy-opening/2,24,opening),min(10,opening/2),min(10,opening/2))
         elif e in ("excited","inspired","surprised"):
