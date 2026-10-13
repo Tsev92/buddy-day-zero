@@ -1,0 +1,37 @@
+name: Publish Buddy Day Zero
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release archive and checksum
+        shell: python
+        run: |
+          import hashlib, json, os, pathlib, zipfile
+          version = pathlib.Path("VERSION.txt").read_text().strip()
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != "v" + version:
+              raise SystemExit(f"Tag {tag} does not match version {version}")
+          files = ["app.py", "update_helper.py", "requirements.txt",
+                   "start_buddy.bat", "start_buddy_silent.vbs", "VERSION.txt"]
+          files += [str(p) for p in pathlib.Path("buddy").rglob("*.py")]
+          for name in files:
+              if not pathlib.Path(name).is_file():
+                  raise SystemExit(f"Missing required file: {name}")
+          with zipfile.ZipFile("buddy-day-zero-update.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+              for name in files:
+                  archive.write(name)
+          digest = hashlib.sha256(pathlib.Path("buddy-day-zero-update.zip").read_bytes()).hexdigest()
+          pathlib.Path("buddy-manifest.json").write_text(
+              json.dumps({"version": version, "sha256": digest}, indent=2)
+          )
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" buddy-day-zero-update.zip buddy-manifest.json --title "Buddy Day Zero $GITHUB_REF_NAME" --generate-notes
