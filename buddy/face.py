@@ -73,11 +73,32 @@ class Face(QWidget):
         p.setPen(Qt.NoPen)
         p.setBrush(bg)
         p.drawRoundedRect(QRectF(3,3,314,174),38,38)
-        if self.mood in ("listening","thinking","error"):
-            status_color = {"listening":"#71e4e8","thinking":"#b5a4ff","error":"#ff8a9d"}[self.mood]
-            p.setPen(QPen(QColor(status_color),2.5))
-            p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(QRectF(4,4,312,172),37,37)
+        # Restored V0.22.1 color identity: expressions tint the glowing border.
+        border_colors = {
+            'neutral':'#55cfe7', 'curious':'#a77bff',
+            'excited':'#ffd35b', 'flustered':'#ff83b4',
+            'surprised':'#fff09a', 'skeptical':'#ad88e8',
+            'amused':'#ff9e76', 'thoughtful':'#829bff',
+            'pleased':'#6fe1b2', 'proud':'#ffc16b',
+            'sleepy':'#5078c8', 'mischievous':'#db77e8',
+            'worried':'#7896d7', 'determined':'#ff9971',
+            'inspired':'#e2b0ff'
+        }
+        status_colors = {
+            'listening':'#49e3f4', 'thinking':'#9676f5',
+            'error':'#ff657b', 'speaking':'#55cfe7'
+        }
+        border = QColor(status_colors.get(self.mood, border_colors.get(e, '#55cfe7')))
+        rate = .24 if e == 'sleepy' else (4.5 if self.mood == 'speaking' else 1.15)
+        pulse = .72 + .28 * math.sin(t * rate)
+        if self.mood == 'speaking':
+            pulse = max(pulse, .65 + .28 * math.sin(t * 7) ** 2)
+        p.setBrush(Qt.NoBrush)
+        for inset, thickness, alpha in ((3.5, 6.5, 30), (5.5, 3.6, 85), (6.5, 1.8, 230)):
+            glow = QColor(border)
+            glow.setAlpha(int(alpha * pulse))
+            p.setPen(QPen(glow, thickness, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawRoundedRect(QRectF(inset,inset,320-2*inset,180-2*inset),36,36)
         p.save()
         p.translate(160,93)
         if e == "curious": p.rotate(3.2)
