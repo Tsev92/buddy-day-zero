@@ -30,6 +30,7 @@ class SpeechBubble(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setFixedSize(286, 106)
         self.content = ''
+        self.full_phrase = ''
         self.tint = QColor('#a78bfa')
         self.tail_side = 'left'
         self.tail_edge = 'bottom'
@@ -37,6 +38,7 @@ class SpeechBubble(QWidget):
 
     def set_phrase(self, phrase, color, side, edge):
         self.content = phrase
+        self.full_phrase = phrase
         self.tint = QColor(color)
         self.tail_side = side
         self.tail_edge = edge
@@ -90,6 +92,7 @@ class BubbleController:
         self.index = 0
         self.duration_ms = 0
         self._active = False
+        self.last_position = -1
 
     def begin(self, text, duration_ms):
         self.stop()
@@ -98,7 +101,41 @@ class BubbleController:
         self.duration_ms = max(1000, int(duration_ms))
         self._active = True
         self._display()
-        self.timer.start(max(550, self.duration_ms // len(self.phrases)))
+        self.bubble.content = ''
+        self.bubble.update()
+
+    def sync_position(self, position_ms):
+        """Reveal words from the actual playback clock, not a separate timer."""
+        if not self._active or not self.phrases:
+            return
+        position_ms = max(0, min(self.duration_ms, int(position_ms)))
+        if position_ms < self.last_position:
+            self.last_position = -1
+        self.last_position = position_ms
+        # Allocate more time to longer phrases; approximate word onset naturally.
+        weights = [max(5, len(part)) for part in self.phrases]
+        total = sum(weights)
+        cursor = 0
+        selected = len(self.phrases)-1
+        portion = 1.0
+        for index, weight in enumerate(weights):
+            span = self.duration_ms * weight/total
+            if position_ms < cursor + span:
+                selected = index
+                portion = (position_ms-cursor)/max(1,span)
+                break
+            cursor += span
+        if selected != self.index:
+            self.index = selected
+            self._display()
+        phrase = self.phrases[selected]
+        # Reveal word groups progressively (no mid-letter chopping).
+        words = phrase.split()
+        reveal_count = min(len(words), max(1, math.ceil(len(words)*portion)))
+        revealed = ' '.join(words[:reveal_count])
+        if revealed != self.bubble.content:
+            self.bubble.content = revealed
+            self.bubble.update()
 
     def _display(self):
         if self.index >= len(self.phrases):
@@ -148,6 +185,11 @@ class BubbleController:
     def speaking_finished(self):
         # Keep the final phrase visible, then disappear naturally.
         self.timer.stop()
+        if self.phrases:
+            self.index = len(self.phrases)-1
+            self._display()
+            self.bubble.content = self.phrases[-1]
+            self.bubble.update()
         self._active = False
         self.hide_timer.start(3300)
 
