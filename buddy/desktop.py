@@ -1,8 +1,8 @@
 """Standalone desktop shell around the original Buddy face and Day Zero brain."""
-from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QObject, Qt, QThread, Signal, QEvent, QSettings
+from PySide6.QtGui import QFont, QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy,
+    QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QMenu,
     QTextBrowser, QVBoxLayout, QWidget, QMessageBox)
 from .face import Face
 from .version import VERSION
@@ -221,7 +221,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(QLabel('Buddy name'))
         self.name = QLineEdit(buddy.core.snapshot()['name'])
         layout.addWidget(self.name)
-        note = QLabel('Voice and audio controls return in a later release.\nThis build keeps the Day Zero memory separate.')
+        note = QLabel('Audio recording and spoken replies are available from Talk.\nBuddy keeps his Day Zero memory separate.')
         note.setWordWrap(True); layout.addWidget(note)
         save = QPushButton('Save name…')
         save.clicked.connect(self.save_name)
@@ -248,33 +248,99 @@ class DesktopBuddy(QMainWindow):
         super().__init__()
         self.core, self.memory, self.brain = core, memory, brain
         self.setWindowTitle('Buddy Day Zero')
-        self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
-        self.setStyleSheet(STYLE)
-        self.setMinimumSize(300, 225)
-        self.resize(440, 305)
-        self.face = Face()  # Day Zero native face
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        # The border is drawn by Face; the window has no OS frame or control bar.
+        self.setStyleSheet(STYLE + """
+            QWidget#buddyRoot, QWidget#buddyFace {
+                background: transparent; border: none;
+            }
+        """)
+        self.setMinimumSize(240, 135)
+        self.resize(360, 203)
+        self.face = Face()
+        self.face.setObjectName('buddyFace')
         self.face.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        root = QWidget(); layout = QVBoxLayout(root)
-        layout.setContentsMargins(8, 8, 8, 8)
+        self.face.installEventFilter(self)
+        root = QWidget()
+        root.setObjectName('buddyRoot')
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(self.face, 1)
-        # Visible version marker for verifying an in-app update without opening settings.
-        self.build_label = QLabel(f'DAY ZERO  ·  v{VERSION}')
-        self.build_label.setAlignment(Qt.AlignCenter)
-        self.build_label.setStyleSheet('color: #90b2c9; font-size: 11px; padding: 1px;')
-        layout.addWidget(self.build_label)
-        controls = QHBoxLayout()
-        chat = QPushButton('💬 Talk')
-        chat.clicked.connect(self.open_chat)
-        settings = QPushButton('⚙ Settings')
-        settings.clicked.connect(self.open_settings)
-        update = QPushButton('↻ Update')
-        update.clicked.connect(self.check_updates)
-        controls.addWidget(chat); controls.addStretch(); controls.addWidget(update); controls.addWidget(settings)
-        layout.addLayout(controls)
         self.setCentralWidget(root)
+        self._drag_origin = None
+        self._drag_window_origin = None
+        self._did_drag = False
+        self._settings = QSettings('BuddyDayZero', 'Desktop')
+        # Keyboard alternatives remain available even without window chrome.
+        for sequence, callback in (('Ctrl+T', self.open_chat),
+                                   ('Ctrl+,', self.open_settings),
+                                   ('Ctrl+U', self.check_updates)):
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(callback)
+        stored = self._settings.value('position')
+        if stored is not None:
+            try:
+                self.move(stored)
+            except (TypeError, ValueError):
+                pass
+        self.setToolTip('Click to talk · Drag to move · Right-click for options')
         self.chat_dialog = None
         self.settings_dialog = None
         self.update_thread = None
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._settings.contains('position'):
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                area = screen.availableGeometry()
+                self.move(area.right() - self.width() - 24,
+                          area.bottom() - self.height() - 24)
+
+    def eventFilter(self, watched, event):
+        if watched is self.face:
+            kind = event.type()
+            if kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._drag_origin = event.globalPosition().toPoint()
+                self._drag_window_origin = self.pos()
+                self._did_drag = False
+                return True
+            if kind == QEvent.MouseMove and self._drag_origin is not None:
+                delta = event.globalPosition().toPoint() - self._drag_origin
+                if delta.manhattanLength() > 5:
+                    self._did_drag = True
+                if self._did_drag:
+                    self.move(self._drag_window_origin + delta)
+                return True
+            if kind == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                moving = self._did_drag
+                self._drag_origin = self._drag_window_origin = None
+                self._did_drag = False
+                if moving:
+                    self._settings.setValue('position', self.pos())
+                else:
+                    self.open_chat()
+                return True
+            if kind == QEvent.ContextMenu:
+                self._show_face_menu(event.globalPos())
+                return True
+            if kind == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
+                return True
+            if kind == QEvent.MouseButtonRelease and event.button() == Qt.RightButton:
+                return True
+        return super().eventFilter(watched, event)
+
+    def _show_face_menu(self, position):
+        menu = QMenu(self)
+        menu.addAction('💬 Talk to Buddy', self.open_chat)
+        menu.addAction('⚙ Settings', self.open_settings)
+        menu.addAction('↻ Check for updates', self.check_updates)
+        menu.addSeparator()
+        menu.addAction(f'Buddy Day Zero v{VERSION}').setEnabled(False)
+        menu.addAction('✕ Quit Buddy', self.close)
+        menu.exec(position)
 
     def _run_update_task(self, action, release=None):
         if self.update_thread is not None: return
