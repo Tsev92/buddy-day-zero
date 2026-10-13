@@ -132,6 +132,31 @@ class ChatDialog(QDialog):
         except Exception as exc:
             self.voice_failed(str(exc))
 
+    def _poll_recording(self):
+        if not self.mic_recording or self._detector is None:
+            return
+        chunk, self._mic_offset = self.mic.read_since(self._mic_offset)
+        decision = self._detector.inspect(chunk)
+        if decision == 'send':
+            self.mic_recording = False
+            self.monitor.stop()
+            self.mic_button.setText('Record')
+            try:
+                audio = self.mic.stop()
+                self.buddy.face.mood = 'thinking'
+                self._voice_task('transcribe', audio)
+            except Exception as exc:
+                self.voice_failed(str(exc))
+        elif decision == 'timeout':
+            self.monitor.stop()
+            self.mic.cancel()
+            self.mic_recording = False
+            self.mic_button.setText('Record')
+            self.buddy.face.mood = 'idle'
+            self.status.setText('No speech detected.')
+            if self.conversation_mode:
+                self.toggle_conversation_mode()
+
     def _voice_task(self, action, value):
         if self.voice_thread is not None: return
         self.voice_action = action
