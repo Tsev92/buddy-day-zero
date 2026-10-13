@@ -35,6 +35,29 @@ class Face(QWidget):
         self.timer.timeout.connect(self.animate)
         self.timer.start(35)
 
+    def border_color(self):
+        tones = {'neutral':'#55cfe7','curious':'#a77bff','excited':'#ffd35b',
+                 'flustered':'#ff83b4','surprised':'#fff09a','skeptical':'#ad88e8',
+                 'amused':'#ff9e76','thoughtful':'#829bff','pleased':'#6fe1b2',
+                 'proud':'#ffc16b','sleepy':'#5078c8','mischievous':'#db77e8',
+                 'worried':'#7896d7','determined':'#ff9971','inspired':'#e2b0ff'}
+        statuses = {'listening':'#49e3f4','thinking':'#9676f5',
+                    'error':'#ff657b','speaking':'#55cfe7','updating':'#b08aff'}
+        if self.celebrating:
+            return QColor('#78e5ac')
+        return QColor(statuses.get(self.mood, tones.get(self.expression, '#55cfe7')))
+
+    def progress(self, percent=None):
+        self.update_percent = percent
+        self.mood = 'updating' if percent is not None else 'idle'
+        self.update()
+
+    def celebrate(self):
+        self.update_percent = 100
+        self.celebrating = True
+        self.celebrate_ticks = 0
+        self.express('excited', 4.0)
+
     def express(self, expression, duration=7.0):
         self.expression = expression if expression in self.EXPRESSIONS else "neutral"
         self.expression_until = time.monotonic() + duration if duration else float("inf")
