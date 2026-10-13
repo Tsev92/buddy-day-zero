@@ -73,6 +73,7 @@ def prepare_model(data_dir):
 class WakeListener(QObject):
     heard = Signal()
     failed = Signal(str)
+    stateChanged = Signal(bool)
 
     def __init__(self, data_dir, microphone_factory, parent=None):
         super().__init__(parent)
@@ -101,6 +102,7 @@ class WakeListener(QObject):
             self.mic = mic
             self.offset = 0
             self.timer.start()
+            self.stateChanged.emit(True)
         except Exception as exc:
             self.stop()
             self.failed.emit(str(exc))
@@ -111,6 +113,7 @@ class WakeListener(QObject):
             self.mic.cancel()
             self.mic = None
         self.recognizer = None
+        self.stateChanged.emit(False)
 
     def poll(self):
         if self.mic is None:
