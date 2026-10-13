@@ -1,7 +1,7 @@
 """Transient comic-style speech bubbles attached to Buddy's floating face."""
 import math
 import re
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QPoint
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QPoint, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont
 from PySide6.QtWidgets import QWidget, QApplication
 
@@ -79,7 +79,13 @@ class BubbleController:
         self.timer.timeout.connect(self._advance)
         self.hide_timer = QTimer(face_window)
         self.hide_timer.setSingleShot(True)
-        self.hide_timer.timeout.connect(self.bubble.hide)
+        self.hide_timer.timeout.connect(self._fade_out)
+        self.fade_in = QPropertyAnimation(self.bubble, b'windowOpacity', face_window)
+        self.fade_in.setDuration(180)
+        self.fade_in.setEasingCurve(QEasingCurve.OutCubic)
+        self.fade_out = QPropertyAnimation(self.bubble, b'windowOpacity', face_window)
+        self.fade_out.setDuration(370)
+        self.fade_out.finished.connect(self.bubble.hide)
         self.phrases = []
         self.index = 0
         self.duration_ms = 0
@@ -117,12 +123,27 @@ class BubbleController:
         self.bubble.set_phrase(self.phrases[self.index],
                                self.face.face.border_color().name(), tail_side, tail_edge)
         self.bubble.move(x,y)
+        self.fade_out.stop()
+        self.fade_in.stop()
+        self.bubble.setWindowOpacity(0.0)
         self.bubble.show()
         self.bubble.raise_()
+        self.fade_in.setStartValue(0.0)
+        self.fade_in.setEndValue(1.0)
+        self.fade_in.start()
 
     def _advance(self):
         self.index += 1
         self._display()
+
+    def _fade_out(self):
+        if not self.bubble.isVisible():
+            return
+        self.fade_in.stop()
+        self.fade_out.stop()
+        self.fade_out.setStartValue(self.bubble.windowOpacity())
+        self.fade_out.setEndValue(0.0)
+        self.fade_out.start()
 
     def speaking_finished(self):
         # Keep the final phrase visible, then disappear naturally.
@@ -137,5 +158,7 @@ class BubbleController:
     def stop(self):
         self.timer.stop()
         self.hide_timer.stop()
+        self.fade_in.stop()
+        self.fade_out.stop()
         self.bubble.hide()
         self._active = False
