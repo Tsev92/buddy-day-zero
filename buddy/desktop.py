@@ -139,6 +139,7 @@ class ChatDialog(QDialog):
         if self.worker_thread is not None or self.voice_thread is not None:
             return
         try:
+            self.buddy.pause_wake()
             self.mic.start()
             self.mic_recording = True
             self._mic_offset = 0
@@ -180,6 +181,7 @@ class ChatDialog(QDialog):
             self.conversation_mode = False
             self.conversation_button.setText('Start Conversation Mode')
             self.status.setText('Conversation ended.')
+            QTimer.singleShot(1200, self.buddy._maybe_start_wake)
             if self.mic_recording:
                 self.monitor.stop()
                 self.mic.cancel()
@@ -436,6 +438,10 @@ class DesktopBuddy(QMainWindow):
         self.settings_dialog = None
         self.update_thread = None
         self.bubbles = BubbleController(self)
+        self.wake_listener = WakeListener(self.core.data_dir, lambda: Microphone(self), self)
+        self.wake_listener.heard.connect(self.open_conversation)
+        self.wake_listener.failed.connect(self._wake_warning)
+        QTimer.singleShot(1600, self._maybe_start_wake)
         # Restart-time acknowledgement is shown only after the installer succeeded.
         from pathlib import Path
         complete = self.core.data_dir.parent/'.buddy_update'/'completed_version.txt'
@@ -447,6 +453,20 @@ class DesktopBuddy(QMainWindow):
                     QTimer.singleShot(900, self._celebrate_updated)
             except OSError:
                 pass
+
+    def _wake_warning(self, message):
+        self.setToolTip('Wake phrase unavailable: ' + message)
+
+    def _maybe_start_wake(self):
+        if not self._settings.value('wake_enabled',False,type=bool):
+            return
+        if self.chat_dialog is not None:
+            if self.chat_dialog.mic_recording or self.chat_dialog.conversation_mode:
+                return
+        self.wake_listener.start()
+
+    def pause_wake(self):
+        self.wake_listener.stop()
 
     def _celebrate_updated(self):
         self.face.celebrate()
