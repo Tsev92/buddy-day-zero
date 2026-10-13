@@ -567,7 +567,11 @@ class DesktopBuddy(QMainWindow):
     def _show_face_menu(self, position):
         menu = QMenu(self)
         menu.addAction('💬 Talk to Buddy', self.open_chat)
-        menu.addAction('🎙 Start Conversation Mode', self.open_conversation)
+        active = self.chat_dialog is not None and self.chat_dialog.conversation_mode
+        if active:
+            menu.addAction('⏹ End Conversation Mode', self.end_conversation)
+        else:
+            menu.addAction('🎙 Start Conversation Mode', self.open_conversation)
         menu.addAction('⚙ Settings', self.open_settings)
         menu.addAction('↻ Check for updates', self.check_updates)
         menu.addSeparator()
@@ -682,8 +686,14 @@ class DesktopBuddy(QMainWindow):
         if queued: self._run_update_task('download',queued)
 
     def open_conversation(self):
-        self.open_chat()
+        # Start the existing conversation engine without showing the chat window.
+        if self.chat_dialog is None:
+            self.chat_dialog = ChatDialog(self)
         if not self.chat_dialog.conversation_mode:
+            self.chat_dialog.toggle_conversation_mode()
+
+    def end_conversation(self):
+        if self.chat_dialog is not None and self.chat_dialog.conversation_mode:
             self.chat_dialog.toggle_conversation_mode()
 
     def open_chat(self):
