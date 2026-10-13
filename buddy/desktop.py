@@ -460,14 +460,28 @@ class DesktopBuddy(QMainWindow):
         # Restart-time acknowledgement is shown only after the installer succeeded.
         from pathlib import Path
         complete = self.core.data_dir.parent/'.buddy_update'/'completed_version.txt'
-        if complete.is_file():
-            try:
-                reported = complete.read_text(encoding='utf8').strip()
+        try:
+            success = False
+            if complete.is_file():
+                success = complete.read_text(encoding='utf8').strip() == VERSION
                 complete.unlink()
-                if reported == VERSION:
-                    QTimer.singleShot(900, self._celebrate_updated)
-            except OSError:
-                pass
+            else:
+                # An upgrade FROM 0.23.7 still uses that version's updater, which
+                # did not yet write the completion marker. Accept its success log
+                # only when the backed-up old version differs from the new one.
+                root = self.core.data_dir.parent
+                backup_version = root/'.buddy_update'/'backup'/'VERSION.txt'
+                legacy_log = root/'buddy-update.log'
+                if backup_version.is_file() and legacy_log.is_file():
+                    before = backup_version.read_text(encoding='utf8').strip()
+                    log_text = legacy_log.read_text(encoding='utf8')
+                    success = before != VERSION and log_text.startswith('Updated ')
+            acknowledged = self.core.data_dir.parent/'.buddy_update'/'celebrated_version.txt'
+            if success and (not acknowledged.is_file() or acknowledged.read_text(encoding='utf8').strip() != VERSION):
+                acknowledged.write_text(VERSION,encoding='utf8')
+                QTimer.singleShot(900, self._celebrate_updated)
+        except OSError:
+            pass
 
     def _wake_warning(self, message):
         self.setToolTip('Wake phrase unavailable: ' + message)
