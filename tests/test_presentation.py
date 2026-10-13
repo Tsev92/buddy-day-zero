@@ -6,6 +6,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
 from buddy.bubbles import split_phrases
 from buddy.face import Face
 from buddy.core import BuddyCore
@@ -40,7 +41,7 @@ class PresentationTests(unittest.TestCase):
             core = BuddyCore(Path(folder))
             memory = Memory(Path(folder))
             buddy = DesktopBuddy(core, memory, Brain(memory))
-            self.assertTrue(buddy.windowFlags() & buddy.windowFlags().FramelessWindowHint)
+            self.assertTrue(buddy.windowFlags() & Qt.FramelessWindowHint)
             self.assertIsNotNone(buddy.bubbles)
             self.assertIsNotNone(buddy.wake_listener)
             buddy.wake_listener.stop()
