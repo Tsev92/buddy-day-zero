@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
     QTextBrowser, QVBoxLayout, QWidget, QMessageBox)
 from .face import Face
 from .version import VERSION
+from .audio import Microphone, Speaker, transcribe_wav, synthesize_wav
 from .updates import check_release, download_verified, UpdateError
 
 STYLE = """QWidget { background: #101925; color: #e6f3ff; font-family: 'Segoe UI', sans-serif; }
@@ -37,6 +38,19 @@ class UpdateTask(QObject):
             else: self.finished.emit(download_verified(self.release,self.folder))
         except Exception as exc: self.failed.emit(str(exc))
 
+class VoiceTask(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+    def __init__(self, action, value):
+        super().__init__()
+        self.action, self.value = action, value
+    def run(self):
+        try:
+            result = transcribe_wav(self.value) if self.action == 'transcribe' else synthesize_wav(self.value)
+            self.finished.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
 class ChatDialog(QDialog):
     def __init__(self, buddy):
         super().__init__(buddy)
@@ -55,6 +69,9 @@ class ChatDialog(QDialog):
         self.send_button = QPushButton('Send')
         self.send_button.clicked.connect(self.send)
         row.addWidget(self.input, 1); row.addWidget(self.send_button)
+        self.mic_button = QPushButton('🎙 Record')
+        self.mic_button.clicked.connect(self.toggle_microphone)
+        row.addWidget(self.mic_button)
         layout.addLayout(row)
         self.status = QLabel('')
         layout.addWidget(self.status)
@@ -63,6 +80,13 @@ class ChatDialog(QDialog):
         if not buddy.memory.count():
             self.append('assistant', '…Hello?')
         self.worker_thread = None
+        self.voice_thread = None
+        self.voice_worker = None
+        self.mic = Microphone(self)
+        self.mic_recording = False
+        self.speaker = Speaker(self)
+        self.speaker.speakingChanged.connect(self.speaking_changed)
+        self.speaker.error.connect(self.voice_failed)
 
     def append(self, role, message):
         from html import escape
@@ -70,9 +94,74 @@ class ChatDialog(QDialog):
         self.log.append(f'<p style="margin:7px 0"><b>{escape(name)}:</b> {escape(message).replace(chr(10), "<br>")}</p>')
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
 
+    def toggle_microphone(self):
+        if self.mic_recording:
+            self.mic_recording = False
+            self.mic_button.setText('🎙 Record')
+            try:
+                audio = self.mic.stop()
+                self.buddy.face.mood = 'thinking'
+                self._voice_task('transcribe', audio)
+                self.status.setText('Transcribing your voice…')
+            except Exception as exc:
+                self.voice_failed(str(exc))
+            return
+        if self.worker_thread is not None or self.voice_thread is not None:
+            return
+        try:
+            self.mic.start()
+            self.mic_recording = True
+            self.mic_button.setText('■ Stop')
+            self.buddy.face.mood = 'listening'
+            self.status.setText('Recording… click Stop when finished.')
+        except Exception as exc:
+            self.voice_failed(str(exc))
+
+    def _voice_task(self, action, value):
+        if self.voice_thread is not None: return
+        self.voice_action = action
+        self.voice_thread = QThread(self)
+        self.voice_worker = VoiceTask(action, value)
+        self.voice_worker.moveToThread(self.voice_thread)
+        self.voice_thread.started.connect(self.voice_worker.run)
+        self.voice_worker.finished.connect(self.voice_succeeded)
+        self.voice_worker.failed.connect(self.voice_failed)
+        self.voice_worker.finished.connect(self.voice_thread.quit)
+        self.voice_worker.failed.connect(self.voice_thread.quit)
+        self.voice_thread.finished.connect(self.voice_cleanup)
+        self.voice_thread.start()
+
+    def voice_succeeded(self, value):
+        if self.voice_action == 'transcribe':
+            self.input.setText(value)
+            self.status.setText('')
+            self._send_transcription = True
+        else:
+            try:
+                self.speaker.play_wav(value)
+                self.status.setText('')
+            except Exception as exc:
+                self.voice_failed(str(exc))
+
+    def voice_failed(self, error):
+        self.status.setText('Voice: ' + error)
+        if self.buddy.face.mood in ('listening', 'thinking', 'speaking'):
+            self.buddy.face.mood = 'idle'
+
+    def voice_cleanup(self):
+        self.voice_worker.deleteLater()
+        self.voice_thread.deleteLater()
+        self.voice_worker = self.voice_thread = None
+        if getattr(self, '_send_transcription', False):
+            self._send_transcription = False
+            self.send()
+
+    def speaking_changed(self, active):
+        self.buddy.face.mood = 'speaking' if active else 'idle'
+
     def send(self):
         message = self.input.text().strip()
-        if not message or self.worker_thread is not None: return
+        if not message or self.worker_thread is not None or self.mic_recording: return
         if len(message) > 4000:
             self.status.setText('Message too long (4000 characters maximum).'); return
         self.input.clear()
@@ -95,6 +184,9 @@ class ChatDialog(QDialog):
         self.append('assistant', answer)
         self.status.setText('')
         self.buddy.face.express('curious', 2.0)
+        if self.voice_thread is None:
+            self.status.setText('Preparing speech…')
+            self._voice_task('speak', answer)
 
     def failed(self, error):
         self.status.setText(error)
@@ -105,12 +197,17 @@ class ChatDialog(QDialog):
         self.worker_thread.deleteLater()
         self.worker_thread = None
         self.input.setEnabled(True); self.send_button.setEnabled(True)
-        self.buddy.face.mood = 'idle'
+        if self.buddy.face.mood != 'speaking':
+            self.buddy.face.mood = 'idle'
         self.input.setFocus()
 
     def closeEvent(self, event):
-        if self.worker_thread is not None:
+        if self.worker_thread is not None or self.voice_thread is not None:
             self.hide(); event.ignore(); return
+        if self.mic_recording:
+            self.mic.cancel()
+            self.mic_recording = False
+        self.speaker.stop()
         super().closeEvent(event)
 
 class SettingsDialog(QDialog):
