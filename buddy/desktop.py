@@ -572,7 +572,14 @@ class DesktopBuddy(QMainWindow):
         self.update_thread.start()
 
     def check_updates(self):
-        if self.update_thread is not None: return
+        if self.update_thread is not None:
+            return
+        if self.chat_dialog is not None:
+            chat = self.chat_dialog
+            if chat.mic_recording or chat.worker_thread is not None or chat.voice_thread is not None:
+                QMessageBox.information(self, 'Finish your conversation',
+                    'Please finish the current recording or response before updating Buddy.')
+                return
         self._run_update_task('check')
 
     def _update_finished(self, result):
