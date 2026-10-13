@@ -453,6 +453,58 @@ class DesktopBuddy(QMainWindow):
             self.face.progress(95)
             self._announce_restart()
 
+    def _announce_restart(self):
+        self._announce_thread = QThread(self)
+        self._announce_worker = VoiceTask('speak', 'Update is ready! I will now restart.')
+        self._announce_worker.moveToThread(self._announce_thread)
+        self._announce_thread.started.connect(self._announce_worker.run)
+        self._announce_worker.finished.connect(self._announce_audio)
+        self._announce_worker.failed.connect(self._announce_failure)
+        self._announce_worker.finished.connect(self._announce_thread.quit)
+        self._announce_worker.failed.connect(self._announce_thread.quit)
+        self._announce_thread.finished.connect(self._announcement_cleanup)
+        self._announce_thread.start()
+
+    def _announce_audio(self, wav):
+        self._restart_speaker = Speaker(self)
+        self._restart_started = False
+        self._restart_speaker.speakingChanged.connect(self._restart_voice_state)
+        self.bubbles.begin('Update is ready! I will now restart.', 2400)
+        try:
+            self._restart_speaker.play_wav(wav)
+            QTimer.singleShot(15000, self._install_and_restart)
+        except Exception:
+            QTimer.singleShot(1800, self._install_and_restart)
+
+    def _announce_failure(self, message):
+        self.bubbles.begin('Update is ready. I will now restart.', 2300)
+        QTimer.singleShot(2300, self._install_and_restart)
+
+    def _announcement_cleanup(self):
+        self._announce_worker.deleteLater()
+        self._announce_thread.deleteLater()
+        self._announce_thread = None
+
+    def _restart_voice_state(self, playing):
+        if playing:
+            self._restart_started = True
+        elif getattr(self, '_restart_started', False):
+            QTimer.singleShot(200, self._install_and_restart)
+
+    def _install_and_restart(self):
+        archive = getattr(self, '_restart_archive', None)
+        if archive is None:
+            return
+        self._restart_archive = None
+        import os, sys, subprocess
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        subprocess.Popen([sys.executable, str(root/'update_helper.py'),
+                          '--root', str(root), '--archive', str(archive),
+                          '--pid', str(os.getpid())], cwd=root,
+                         creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+        QApplication.instance().quit()
+
     def _update_failed(self, message):
         self.face.progress(None)
         QMessageBox.warning(self,'Update error',message)
