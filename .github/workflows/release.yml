@@ -1,5 +1,8 @@
 name: Publish Buddy Day Zero
 on:
+  push:
+    branches: [main]
+    paths: [release-request.txt]
   release:
     types: [published]
   workflow_dispatch:
@@ -17,12 +20,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build release archive and checksum
         env:
-          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name || '' }}
         shell: python
         run: |
           import hashlib, json, os, pathlib, zipfile
           version = pathlib.Path("VERSION.txt").read_text().strip()
-          tag = os.environ['RELEASE_TAG']
+          tag = os.environ['RELEASE_TAG'] or ('v' + version)
           if tag.lstrip('v') != version:
               raise SystemExit(f"Tag {tag} does not match version {version}")
           files = ["app.py", "update_helper.py", "requirements.txt",
@@ -38,8 +41,14 @@ jobs:
           pathlib.Path("buddy-manifest.json").write_text(
               json.dumps({"version": version, "sha256": digest}, indent=2)
           )
-      - name: Publish GitHub Release
+      - name: Publish or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" buddy-day-zero-update.zip buddy-manifest.json --clobber
+          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name || '' }}
+        run: |
+          TAG="${RELEASE_TAG:-v$(cat VERSION.txt)}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" buddy-day-zero-update.zip buddy-manifest.json --clobber
+          else
+            gh release create "$TAG" buddy-day-zero-update.zip buddy-manifest.json --target "$GITHUB_SHA" --title "Buddy Day Zero $TAG" --generate-notes
+          fi
