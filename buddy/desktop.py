@@ -444,21 +444,17 @@ class DesktopBuddy(QMainWindow):
             answer=QMessageBox.question(self,'Buddy Day Zero update',
                 f"Version {result['version']} is available.\n\n{result['notes'][:500]}\n\nDownload and install?",
                 QMessageBox.Yes | QMessageBox.No)
-            if answer == QMessageBox.Yes: self._queued_release = result
+            if answer == QMessageBox.Yes:
+                self.face.progress(2)
+                self._queued_release = result
         else:
-            answer=QMessageBox.question(self,'Update downloaded',
-                'Update verified. Buddy will close, install the update, and reopen. Continue?',
-                QMessageBox.Yes | QMessageBox.No)
-            if answer != QMessageBox.Yes: return
-            import os,sys,subprocess
-            from pathlib import Path
-            root=Path(__file__).resolve().parent.parent
-            subprocess.Popen([sys.executable,str(root/'update_helper.py'),
-                              '--root',str(root),'--archive',str(result),'--pid',str(os.getpid())],
-                             cwd=root,creationflags=getattr(subprocess,'CREATE_NEW_PROCESS_GROUP',0))
-            QApplication.instance().quit()
+            # The user approved before download. Do not ask a second time.
+            self._restart_archive = result
+            self.face.progress(95)
+            self._announce_restart()
 
     def _update_failed(self, message):
+        self.face.progress(None)
         QMessageBox.warning(self,'Update error',message)
 
     def _update_cleanup(self):
