@@ -11,6 +11,7 @@ from .updates import check_release, download_verified, UpdateError
 from .bubbles import BubbleController
 from .listening import SilenceDetector
 from .wake import WakeListener, prepare_model
+from .speech_visuals import voice_envelope
 
 STYLE = """QWidget { background: #101925; color: #e6f3ff; font-family: 'Segoe UI', sans-serif; }
 QPushButton { background: #253b51; border: 1px solid #436079; border-radius: 8px; padding: 7px 11px; }
@@ -120,6 +121,10 @@ class ChatDialog(QDialog):
         self.speaker.error.connect(self.voice_failed)
         self._heard_speaker = False
         self._reply_for_bubble = ''
+        self._speech_levels = []
+        self._speech_timer = QTimer(self)
+        self._speech_timer.setInterval(40)
+        self._speech_timer.timeout.connect(self._sync_speech_visuals
 
     def append(self, role, message):
         from html import escape
@@ -195,7 +200,7 @@ class ChatDialog(QDialog):
             self.toggle_microphone()
 
     def _resume_conversation(self):
-        if self.conversation_mode and self.isVisible() and not self.mic_recording:
+        if self.conversation_mode and not self.mic_recording:
             if self.worker_thread is None and self.voice_thread is None:
                 self.toggle_microphone()
 
@@ -231,6 +236,7 @@ class ChatDialog(QDialog):
                 from io import BytesIO
                 with wave.open(BytesIO(value), 'rb') as w:
                     duration = int(1000 * w.getnframes() / max(1, w.getframerate()))
+                self._speech_levels = voice_envelope(value)
                 self.buddy.bubbles.begin(self._reply_for_bubble, duration)
                 self.speaker.play_wav(value)
                 self.status.setText('')
@@ -250,11 +256,22 @@ class ChatDialog(QDialog):
             self._send_transcription = False
             self.send()
 
+    def _sync_speech_visuals(self):
+        position = max(0, self.speaker.player.position())
+        index = min(len(self._speech_levels)-1, position//40)
+        if self._speech_levels and index >= 0:
+            target = self._speech_levels[index]
+            self.buddy.face.audio_level += (target-self.buddy.face.audio_level)*.65
+        self.buddy.bubbles.sync_position(position)
+
     def speaking_changed(self, active):
         self.buddy.face.mood = 'speaking' if active else 'idle'
         if active:
             self._heard_speaker = True
+            self._speech_timer.start()
         elif self._heard_speaker:
+            self._speech_timer.stop()
+            self.buddy.face.audio_level = 0.0
             self._heard_speaker = False
             self.buddy.bubbles.speaking_finished()
             QTimer.singleShot(850, self._resume_conversation)
@@ -312,6 +329,7 @@ class ChatDialog(QDialog):
             self.mic.cancel()
             self.mic_recording = False
         self.monitor.stop()
+        self._speech_timer.stop()
         self.conversation_mode = False
         self.buddy.bubbles.stop()
         self.speaker.stop()
