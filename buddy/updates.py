@@ -41,7 +41,7 @@ def check_release():
             'url':bundle_asset['browser_download_url'],'sha256':checksum.lower(),
             'notes':release.get('body','')[:1500]}
 
-def download_verified(release, folder):
+def download_verified(release, folder, progress=None):
     folder=Path(folder); folder.mkdir(parents=True,exist_ok=True)
     destination=folder/'buddy-day-zero-update.zip'
     temp=destination.with_suffix('.part')
@@ -50,15 +50,20 @@ def download_verified(release, folder):
     try:
         with urlopen(req,timeout=60) as response, temp.open('wb') as out:
             total=0
+            expected=max(1, int(response.headers.get('Content-Length', 0) or 0))
             while True:
                 chunk=response.read(1024*256)
                 if not chunk: break
                 total+=len(chunk)
                 if total>60*1024*1024: raise UpdateError('Update exceeds the 60 MB safety limit.')
                 sha.update(chunk);out.write(chunk)
+                if progress is not None and expected > 1:
+                    progress(min(88, int(5+83*total/expected)))
         if sha.hexdigest()!=release['sha256']:
             raise UpdateError('Update checksum mismatch. Nothing was installed.')
         os.replace(temp,destination)
+        if progress is not None:
+            progress(92)
         return destination
     finally:
         temp.unlink(missing_ok=True)
