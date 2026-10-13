@@ -154,6 +154,10 @@ class Face(QWidget):
                 y = 88 + radius * math.sin(angle)
                 size = 3.2 + i % 3
                 p.drawEllipse(QRectF(x-size, y-size, size*2, size*2))
+        if self.wake_active and self.update_percent is None:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor('#49e3f4'))
+            p.drawEllipse(QRectF(22, 21, 7, 7))
         p.save()
         p.translate(160,93)
         if e == "curious": p.rotate(3.2)
