@@ -1,219 +1,232 @@
-"""Transient comic-style speech bubbles attached to Buddy's floating face."""
+"""Single, expanding, auto-scrolling speech bubble for Buddy's floating face.
+
+Audio playback and caption rendering are separate: the entire response is stored
+before playback, and the bubble uses a monotonic timer with safe completion.
+"""
 import math
 import re
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QPoint, QPropertyAnimation, QEasingCurve, QElapsedTimer
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont
+from PySide6.QtCore import Qt, QRectF, QTimer, QElapsedTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QTextDocument, QFont
 from PySide6.QtWidgets import QWidget, QApplication
 
+
 def split_phrases(text, max_chars=82):
-    """Split at sentence/phrase boundaries without cutting words."""
+    """Legacy helper retained for callers; presentation uses one bubble now."""
     tokens = re.findall(r'\S+\s*', text.strip())
-    result, current = [], ''
+    phrases, current = [], ''
     for token in tokens:
-        word = token.strip()
         if current and len(current) + len(token) > max_chars:
-            result.append(current.strip()); current = ''
+            phrases.append(current.strip())
+            current = ''
         current += token
-        if len(current) >= 29 and re.search(r'[.!?;,:—]$', word):
-            result.append(current.strip()); current = ''
+        if len(current) >= 29 and re.search(r'[.!?;,:—]$', token.strip()):
+            phrases.append(current.strip())
+            current = ''
     if current.strip():
-        result.append(current.strip())
-    return result or ['']
+        phrases.append(current.strip())
+    return phrases or ['']
+
+
+def visible_words(text, fraction):
+    """Always return the prefix of the COMPLETE response, never just a phrase."""
+    words = list(re.finditer(r'\S+', text))
+    if not words:
+        return ''
+    count = min(len(words), max(1, math.ceil(len(words) * max(0.0, min(1.0, fraction)))))
+    return text[:words[count - 1].end()]
+
 
 class SpeechBubble(QWidget):
-    """A small dark bubble; tail sits on the side facing the face."""
+    WIDTH = 300
+    MIN_HEIGHT = 66
+    MARGIN = 17
+    TEXT_WIDTH = WIDTH - 2 * 33
+
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint |
                          Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.setFixedSize(286, 106)
+        self.setFixedSize(self.WIDTH, self.MIN_HEIGHT)
+        self.full_text = ''
         self.content = ''
-        self.full_phrase = ''
         self.tint = QColor('#a78bfa')
         self.tail_side = 'left'
-        self.tail_edge = 'bottom'
+        self._scroll = 0.0
+        self._scroll_target = 0.0
+        self._max_height = 203
+        self.document = QTextDocument(self)
+        self.document.setDocumentMargin(0)
+        self.document.setDefaultFont(QFont('Segoe UI', 10))
+        self.document.setTextWidth(self.TEXT_WIDTH)
         self.setWindowTitle('Buddy speech')
 
-    def set_phrase(self, phrase, color, side, edge):
-        self.content = phrase
-        self.full_phrase = phrase
-        self.tint = QColor(color)
-        self.tail_side = side
-        self.tail_edge = edge
+    def set_text(self, text, final=False):
+        self.content = text
+        self.document.setPlainText(text)
+        # Document height is the full text height, never a truncated sentence.
+        needed = math.ceil(self.document.size().height()) + 32
+        height = max(self.MIN_HEIGHT, min(self._max_height, needed))
+        if self.height() != height:
+            self.setFixedHeight(height)
+        inner_height = max(1, height - 30)
+        self._scroll_target = max(0.0, self.document.size().height() - inner_height)
+        if final:
+            self._scroll = self._scroll_target
         self.update()
+
+    def animate_scroll(self):
+        if abs(self._scroll_target - self._scroll) > 0.1:
+            self._scroll += (self._scroll_target - self._scroll) * 0.28
+            self.update()
+        else:
+            self._scroll = self._scroll_target
 
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        # A transparent outer margin allows the tinted border and tail to glow.
-        body = QRectF(17, 13, 252, 78)
+        h = self.height()
+        body = QRectF(13, 5, self.width() - 26, h - 10)
         path = QPainterPath()
         path.addRoundedRect(body, 16, 16)
+        # Horizontal tail always faces the center of Buddy's floating face.
+        cy = h / 2
         tail = QPainterPath()
-        if self.tail_edge == 'top':
-            x = 60 if self.tail_side == 'left' else 223
-            tail.moveTo(x-15, 15); tail.lineTo(x-5, 2); tail.lineTo(x+15, 15)
+        if self.tail_side == 'left':
+            tail.moveTo(16, cy - 13)
+            tail.lineTo(1, cy)
+            tail.lineTo(16, cy + 13)
         else:
-            x = 60 if self.tail_side == 'left' else 223
-            tail.moveTo(x-15, 89); tail.lineTo(x-5, 104); tail.lineTo(x+15, 89)
+            w = self.width()
+            tail.moveTo(w - 16, cy - 13)
+            tail.lineTo(w - 1, cy)
+            tail.lineTo(w - 16, cy + 13)
         path = path.united(tail)
-        glow = QColor(self.tint); glow.setAlpha(55)
-        p.setPen(QPen(glow, 8))
+        glow = QColor(self.tint)
+        glow.setAlpha(48)
+        p.setPen(QPen(glow, 7))
         p.setBrush(QColor('#29334e'))
         p.drawPath(path)
-        p.setPen(QPen(self.tint, 2.4))
+        p.setPen(QPen(self.tint, 2.2))
         p.drawPath(path)
-        p.setPen(QColor('#f0f4ff'))
-        f = QFont('Segoe UI', 10)
-        p.setFont(f)
-        p.drawText(QRectF(34, 22, 220, 62),
-                   Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWordWrap, self.content)
+        p.save()
+        p.setClipRect(QRectF(28, 16, self.TEXT_WIDTH + 2, h - 30))
+        p.translate(30, 16 - self._scroll)
+        self.document.setDefaultStyleSheet('body { color: #f0f4ff; }')
+        context = __import__('PySide6.QtGui', fromlist=['QAbstractTextDocumentLayout']).QAbstractTextDocumentLayout.PaintContext()
+        context.palette.setColor(context.palette.Text, QColor('#f0f4ff'))
+        self.document.documentLayout().draw(p, context)
+        p.restore()
         p.end()
 
+
 class BubbleController:
-    """Display one short phrase at a time; duration tracks spoken WAV length."""
+    """One stable window for the entire utterance, with independent reveal timer."""
+
     def __init__(self, face_window):
         self.face = face_window
         self.bubble = SpeechBubble()
         self.timer = QTimer(face_window)
-        self.timer.setInterval(40)
+        self.timer.setInterval(35)
         self.timer.timeout.connect(self._tick)
         self.clock = QElapsedTimer()
         self.hide_timer = QTimer(face_window)
         self.hide_timer.setSingleShot(True)
         self.hide_timer.timeout.connect(self._fade_out)
         self.fade_in = QPropertyAnimation(self.bubble, b'windowOpacity', face_window)
-        self.fade_in.setDuration(180)
+        self.fade_in.setDuration(170)
         self.fade_in.setEasingCurve(QEasingCurve.OutCubic)
         self.fade_out = QPropertyAnimation(self.bubble, b'windowOpacity', face_window)
-        self.fade_out.setDuration(370)
+        self.fade_out.setDuration(400)
         self.fade_out.finished.connect(self.bubble.hide)
-        self.phrases = []
-        self.index = 0
+        self.full_text = ''
         self.duration_ms = 0
+        self.last_position = 0
         self._active = False
-        self.last_position = -1
+        self._last_geometry = None
 
     def begin(self, text, duration_ms):
         self.stop()
-        self.phrases = split_phrases(text)
-        self.index = 0
-        self.duration_ms = max(1000, int(duration_ms))
+        self.full_text = str(text or '').strip()
+        self.duration_ms = max(400, int(duration_ms))
+        self.last_position = 0
         self._active = True
-        self.last_position = -1
         self.clock.start()
-        self._display()
-        self.bubble.content = ''
-        self.bubble.update()
+        self.bubble.full_text = self.full_text
+        self.bubble._max_height = max(self.bubble.MIN_HEIGHT, self.face.height())
+        self.bubble.set_text('', final=True)
+        self.reposition()
+        self.bubble.setWindowOpacity(0)
+        self.bubble.show()
+        self.fade_in.setStartValue(0)
+        self.fade_in.setEndValue(1)
+        self.fade_in.start()
         self.timer.start()
 
     def _tick(self):
-        # Never rely solely on QMediaPlayer.positionChanged: some Windows
-        # audio backends report zero until the clip is almost finished.
         if self._active:
+            # QMediaPlayer sometimes never reports positions on Windows.
             self.sync_position(self.clock.elapsed())
+        self.bubble.animate_scroll()
 
     def sync_position(self, position_ms):
-        """Reveal words from the actual playback clock, not a separate timer."""
-        if not self._active or not self.phrases:
+        if not self._active:
             return
-        position_ms = max(0, min(self.duration_ms, int(position_ms)))
-        position_ms = max(position_ms, self.clock.elapsed())
-        position_ms = min(self.duration_ms, position_ms)
-        if position_ms < self.last_position:
-            position_ms = self.last_position
-        self.last_position = position_ms
-        # Allocate more time to longer phrases; approximate word onset naturally.
-        weights = [max(5, len(part)) for part in self.phrases]
-        total = sum(weights)
-        cursor = 0
-        selected = len(self.phrases)-1
-        portion = 1.0
-        for index, weight in enumerate(weights):
-            span = self.duration_ms * weight/total
-            if position_ms < cursor + span:
-                selected = index
-                portion = (position_ms-cursor)/max(1,span)
-                break
-            cursor += span
-        if selected != self.index:
-            self.index = selected
-            self._display()
-        phrase = self.phrases[selected]
-        # Reveal word groups progressively (no mid-letter chopping).
-        words = phrase.split()
-        reveal_count = min(len(words), max(1, math.ceil(len(words)*portion)))
-        revealed = ' '.join(words[:reveal_count])
-        if revealed != self.bubble.content:
-            self.bubble.content = revealed
-            self.bubble.update()
+        position_ms = max(self.last_position, int(position_ms), self.clock.elapsed())
+        self.last_position = min(position_ms, self.duration_ms)
+        fraction = self.last_position / self.duration_ms
+        if self.last_position >= self.duration_ms:
+            text = self.full_text
+        else:
+            text = visible_words(self.full_text, fraction)
+        if text != self.bubble.content:
+            old_height = self.bubble.height()
+            self.bubble.set_text(text, final=False)
+            if old_height != self.bubble.height():
+                self.reposition()
 
-    def _display(self):
-        if self.index >= len(self.phrases):
-            self.timer.stop()
-            self.hide_timer.start(3400)
-            self._active = False
-            return
+    def reposition(self):
         screen = self.face.screen() or QApplication.primaryScreen()
         if screen is None:
             return
-        area = screen.availableGeometry()
         rect = self.face.frameGeometry()
-        # Prefer beside Buddy; alternate above/below when near a screen edge.
-        to_right = area.right() - rect.right() >= 294
-        to_left = rect.left() - area.left() >= 294
-        x = rect.right() + 10 if to_right or not to_left else rect.left() - 296
-        x = max(area.left(), min(x, area.right() - 286))
-        desired = rect.top() + (self.index % 2) * 99 - 35
-        y = max(area.top(), min(desired, area.bottom() - 106))
-        tail_edge = 'bottom' if y + 53 < rect.center().y() else 'top'
-        tail_side = 'left' if x > rect.center().x() else 'right'
-        self.bubble.set_phrase(self.phrases[self.index],
-                               self.face.face.border_color().name(), tail_side, tail_edge)
-        self.bubble.move(x,y)
-        self.fade_out.stop()
-        self.fade_in.stop()
-        self.bubble.setWindowOpacity(0.0)
-        self.bubble.show()
-        self.bubble.raise_()
-        self.fade_in.setStartValue(0.0)
-        self.fade_in.setEndValue(1.0)
-        self.fade_in.start()
+        area = screen.availableGeometry()
+        width = self.bubble.width()
+        gap = 6
+        right_room = area.right() - rect.right()
+        left_room = rect.left() - area.left()
+        place_right = right_room >= width + gap or right_room >= left_room
+        x = rect.right() + gap if place_right else rect.left() - width - gap
+        x = max(area.left(), min(x, area.right() - width + 1))
+        self.bubble.tail_side = 'left' if x > rect.center().x() else 'right'
+        y = rect.center().y() - self.bubble.height() / 2
+        y = max(area.top(), min(int(y), area.bottom() - self.bubble.height() + 1))
+        self.bubble.move(int(x), int(y))
+        self.bubble.update()
 
-    def _advance(self):
-        self.index += 1
-        self._display()
+    def speaking_finished(self):
+        if not self.full_text:
+            self.stop()
+            return
+        self._active = False
+        self.bubble.set_text(self.full_text, final=True)
+        self.reposition()
+        self.timer.start()
+        self.hide_timer.start(3600)
 
     def _fade_out(self):
-        if not self.bubble.isVisible():
-            return
+        self.timer.stop()
         self.fade_in.stop()
         self.fade_out.stop()
         self.fade_out.setStartValue(self.bubble.windowOpacity())
         self.fade_out.setEndValue(0.0)
         self.fade_out.start()
 
-    def speaking_finished(self):
-        # Keep the final phrase visible, then disappear naturally.
-        self.timer.stop()
-        if self.phrases:
-            self.index = len(self.phrases)-1
-            self._display()
-            self.bubble.content = self.phrases[-1]
-            self.bubble.update()
-        self._active = False
-        self.hide_timer.start(3300)
-
-    def reposition(self):
-        if self.bubble.isVisible():
-            self._display()
-
     def stop(self):
+        self._active = False
         self.timer.stop()
         self.hide_timer.stop()
         self.fade_in.stop()
         self.fade_out.stop()
         self.bubble.hide()
-        self._active = False
