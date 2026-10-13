@@ -361,6 +361,7 @@ class DesktopBuddy(QMainWindow):
         self.chat_dialog = None
         self.settings_dialog = None
         self.update_thread = None
+        self.bubbles = BubbleController(self)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -385,6 +386,7 @@ class DesktopBuddy(QMainWindow):
                     self._did_drag = True
                 if self._did_drag:
                     self.move(self._drag_window_origin + delta)
+                    self.bubbles.reposition()
                 return True
             if kind == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
                 moving = self._did_drag
@@ -407,6 +409,7 @@ class DesktopBuddy(QMainWindow):
     def _show_face_menu(self, position):
         menu = QMenu(self)
         menu.addAction('💬 Talk to Buddy', self.open_chat)
+        menu.addAction('🎙 Start Conversation Mode', self.open_conversation)
         menu.addAction('⚙ Settings', self.open_settings)
         menu.addAction('↻ Check for updates', self.check_updates)
         menu.addSeparator()
@@ -463,6 +466,11 @@ class DesktopBuddy(QMainWindow):
         queued=getattr(self,'_queued_release',None)
         self._queued_release=None
         if queued: self._run_update_task('download',queued)
+
+    def open_conversation(self):
+        self.open_chat()
+        if not self.chat_dialog.conversation_mode:
+            self.chat_dialog.toggle_conversation_mode()
 
     def open_chat(self):
         if self.chat_dialog is None: self.chat_dialog = ChatDialog(self)
