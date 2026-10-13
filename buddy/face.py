@@ -132,16 +132,15 @@ class Face(QWidget):
             p.setPen(QPen(glow, thickness, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             p.drawRoundedRect(QRectF(inset,inset,320-2*inset,180-2*inset),36,36)
         if self.update_percent is not None and not self.celebrating:
+            # Indeterminate spinner: archive servers don't always send a usable size.
             p.setBrush(Qt.NoBrush)
-            for x in (105, 215):
-                p.setPen(QPen(QColor('#586181'), 7))
-                p.drawEllipse(QRectF(x-27, 51, 54, 54))
+            for x, offset in ((105, 0), (215, 165)):
+                ring = QRectF(x-27, 51, 54, 54)
+                p.setPen(QPen(QColor('#45536c'), 6))
+                p.drawEllipse(ring)
                 p.setPen(QPen(QColor('#a8ecff'), 7, Qt.SolidLine, Qt.RoundCap))
-                p.drawArc(QRectF(x-27, 51, 54, 54), 90 * 16,
-                          -int(min(100, self.update_percent) * 3.6 * 16))
-            p.setPen(QColor('#e3eaff'))
-            p.drawText(QRectF(0, 122, 320, 25), Qt.AlignCenter,
-                       str(int(self.update_percent)) + '%')
+                start_angle = int((self.tick * 9 + offset) % 360)
+                p.drawArc(ring, start_angle * 16, 95 * 16)
             p.end()
             return
         if self.celebrating:
@@ -158,6 +157,18 @@ class Face(QWidget):
             p.setPen(Qt.NoPen)
             p.setBrush(QColor('#49e3f4'))
             p.drawEllipse(QRectF(22, 21, 7, 7))
+        if self.mood == 'listening':
+            # The familiar animated ( ) brackets show when Buddy is listening.
+            glow = QColor('#a8ecff')
+            glow.setAlpha(int(150 + 90 * (0.5 + 0.5 * math.sin(t * 5))))
+            p.setPen(QPen(glow, 4.2, Qt.SolidLine, Qt.RoundCap))
+            p.setBrush(Qt.NoBrush)
+            for cx, sign in ((55, -1), (265, 1)):
+                bracket = QPainterPath()
+                bracket.moveTo(cx - sign * 2, 49)
+                bracket.cubicTo(cx + sign * 16, 65, cx + sign * 16, 100,
+                                cx - sign * 2, 119)
+                p.drawPath(bracket)
         p.save()
         p.translate(160,93)
         if e == "curious": p.rotate(3.2)
