@@ -363,6 +363,23 @@ class DesktopBuddy(QMainWindow):
         self.settings_dialog = None
         self.update_thread = None
         self.bubbles = BubbleController(self)
+        # Restart-time acknowledgement is shown only after the installer succeeded.
+        from pathlib import Path
+        complete = self.core.data_dir.parent/'.buddy_update'/'completed_version.txt'
+        if complete.is_file():
+            try:
+                reported = complete.read_text(encoding='utf8').strip()
+                complete.unlink()
+                if reported == VERSION:
+                    QTimer.singleShot(900, self._celebrate_updated)
+            except OSError:
+                pass
+
+    def _celebrate_updated(self):
+        self.face.celebrate()
+        QApplication.beep()
+        self.bubbles.begin('We did it! Update complete!', 3200)
+        QTimer.singleShot(3500, self.bubbles.speaking_finished)
 
     def showEvent(self, event):
         super().showEvent(event)
