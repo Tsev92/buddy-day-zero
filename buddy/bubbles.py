@@ -6,7 +6,7 @@ before playback, and the bubble uses a monotonic timer with safe completion.
 import math
 import re
 from PySide6.QtCore import Qt, QRectF, QTimer, QElapsedTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QTextDocument, QFont
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QTextDocument, QFont, QPalette, QAbstractTextDocumentLayout
 from PySide6.QtWidgets import QWidget, QApplication
 
 
@@ -114,8 +114,8 @@ class SpeechBubble(QWidget):
         p.setClipRect(QRectF(28, 16, self.TEXT_WIDTH + 2, h - 30))
         p.translate(30, 16 - self._scroll)
         self.document.setDefaultStyleSheet('body { color: #f0f4ff; }')
-        context = __import__('PySide6.QtGui', fromlist=['QAbstractTextDocumentLayout']).QAbstractTextDocumentLayout.PaintContext()
-        context.palette.setColor(context.palette.Text, QColor('#f0f4ff'))
+        context = QAbstractTextDocumentLayout.PaintContext()
+        context.palette.setColor(QPalette.ColorRole.Text, QColor('#f0f4ff'))
         self.document.documentLayout().draw(p, context)
         p.restore()
         p.end()
