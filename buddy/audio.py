@@ -98,6 +98,16 @@ class Microphone(QObject):
         self.recorder = fmt
         self.source.start(self.buffer)
 
+    def read_since(self, offset):
+        """Read new PCM bytes without stopping the audio source."""
+        if self.buffer is None:
+            return b'', offset
+        raw = bytes(self.buffer.data())
+        end = len(raw)
+        if end < offset:
+            offset = 0
+        return raw[offset:end], end
+
     def stop(self):
         if self.source is None:
             raise RuntimeError("Not recording.")
