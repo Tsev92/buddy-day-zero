@@ -1,2 +1,2 @@
-VERSION = "0.23.10"
+VERSION = "0.23.11"
 APP_NAME = "Buddy Day Zero"
