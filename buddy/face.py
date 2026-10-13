@@ -20,6 +20,9 @@ class Face(QWidget):
         self.expression = "neutral"
         self.expression_until = 0.0
         self.audio_level = 0.0
+        self.update_percent = None
+        self.celebrating = False
+        self.celebrate_ticks = 0
         self.tick = 0
         self.blink_amount = 0.0
         self.blink_until = 0.0
