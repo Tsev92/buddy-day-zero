@@ -215,9 +215,16 @@ class ChatDialog(QDialog):
 
     def voice_succeeded(self, value):
         if self.voice_action == 'transcribe':
-            self.input.setText(value)
-            self.status.setText('')
-            self._send_transcription = True
+            normalized = ' '.join(value.lower().strip().split())
+            if self.conversation_mode and any(bye in normalized for bye in
+                 ('goodbye buddy', 'bye buddy', 'stop listening', 'end conversation')):
+                self.append('user', value)
+                self.toggle_conversation_mode()
+                self._send_transcription = False
+            else:
+                self.input.setText(value)
+                self.status.setText('')
+                self._send_transcription = True
         else:
             try:
                 import wave
@@ -251,6 +258,8 @@ class ChatDialog(QDialog):
             self._heard_speaker = False
             self.buddy.bubbles.speaking_finished()
             QTimer.singleShot(850, self._resume_conversation)
+            if not self.conversation_mode:
+                QTimer.singleShot(900, self.buddy._maybe_start_wake)
 
     def send(self):
         message = self.input.text().strip()
@@ -261,6 +270,7 @@ class ChatDialog(QDialog):
         self.append('user', message)
         self.input.setEnabled(False); self.send_button.setEnabled(False)
         self.status.setText('Buddy is thinking…')
+        self.buddy.pause_wake()
         self.buddy.face.mood = 'thinking'
         self.worker_thread = QThread(self)
         self.worker = ReplyTask(self.buddy.brain, message)
@@ -301,7 +311,11 @@ class ChatDialog(QDialog):
         if self.mic_recording:
             self.mic.cancel()
             self.mic_recording = False
+        self.monitor.stop()
+        self.conversation_mode = False
+        self.buddy.bubbles.stop()
         self.speaker.stop()
+        QTimer.singleShot(1000, self.buddy._maybe_start_wake)
         super().closeEvent(event)
 
 class SettingsDialog(QDialog):
