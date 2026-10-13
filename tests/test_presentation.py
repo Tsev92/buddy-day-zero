@@ -55,6 +55,19 @@ class PresentationTests(unittest.TestCase):
             buddy.wake_listener.stop()
             buddy.close()
 
+    def test_hidden_conversation_mode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            buddy = DesktopBuddy(BuddyCore(Path(folder)),
+                                 Memory(Path(folder)), Brain(Memory(Path(folder))))
+            with patch('buddy.desktop.ChatDialog.toggle_microphone'):
+                buddy.open_conversation()
+            self.assertTrue(buddy.chat_dialog.conversation_mode)
+            self.assertFalse(buddy.chat_dialog.isVisible())
+            buddy.end_conversation()
+            self.assertFalse(buddy.chat_dialog.conversation_mode)
+            buddy.wake_listener.stop()
+            buddy.close()
+
     def test_ends_speech_without_click(self):
         d = SilenceDetector()
         base = d.began
