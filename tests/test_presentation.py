@@ -3,6 +3,8 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+import io, math, struct, wave
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
@@ -14,6 +16,7 @@ from buddy.memory import Memory
 from buddy.brain import Brain
 from buddy.desktop import DesktopBuddy
 from buddy.listening import SilenceDetector
+from buddy.speech_visuals import voice_envelope
 
 class PresentationTests(unittest.TestCase):
     @classmethod
