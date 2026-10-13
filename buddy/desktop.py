@@ -318,10 +318,64 @@ class SettingsDialog(QDialog):
         save = QPushButton('Save name…')
         save.clicked.connect(self.save_name)
         layout.addWidget(save)
+        self.wake_box = QCheckBox('Enable local "Hey Buddy" wake phrase')
+        self.wake_box.setChecked(buddy._settings.value('wake_enabled', False, type=bool))
+        self.wake_box.toggled.connect(self.toggle_wake)
+        layout.addWidget(self.wake_box)
+        self.wake_status = QLabel('Wake detection runs locally; first enable downloads an offline model.')
+        self.wake_status.setWordWrap(True)
+        layout.addWidget(self.wake_status)
+        self._wake_setup_thread = None
         layout.addWidget(QLabel(f'Buddy Day Zero v{VERSION}'))
         update = QPushButton('Check for updates…')
         update.clicked.connect(self.buddy.check_updates)
         layout.addWidget(update)
+
+    def toggle_wake(self, enabled):
+        if not enabled:
+            self.buddy._settings.setValue('wake_enabled', False)
+            self.buddy.wake_listener.stop()
+            self.wake_status.setText('Wake phrase disabled.')
+            return
+        answer = QMessageBox.question(
+            self, 'Enable local wake phrase?',
+            'Buddy needs to download an offline English speech model (about 40 MB) and may install Vosk. '
+            'Wake listening stays on this device; normal conversation audio is only sent when you speak. '
+            'Continue?', QMessageBox.Yes | QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            self.wake_box.blockSignals(True)
+            self.wake_box.setChecked(False)
+            self.wake_box.blockSignals(False)
+            return
+        self.wake_box.setEnabled(False)
+        self.wake_status.setText('Preparing offline wake detection… this may take a few minutes.')
+        self._wake_setup_thread = QThread(self)
+        self._wake_setup_worker = WakeSetupTask(self.buddy.core.data_dir)
+        self._wake_setup_worker.moveToThread(self._wake_setup_thread)
+        self._wake_setup_thread.started.connect(self._wake_setup_worker.run)
+        self._wake_setup_worker.finished.connect(self._wake_ready)
+        self._wake_setup_worker.failed.connect(self._wake_failed)
+        self._wake_setup_worker.finished.connect(self._wake_setup_thread.quit)
+        self._wake_setup_worker.failed.connect(self._wake_setup_thread.quit)
+        self._wake_setup_thread.finished.connect(self._wake_cleanup)
+        self._wake_setup_thread.start()
+
+    def _wake_ready(self, model_path):
+        self.buddy._settings.setValue('wake_enabled', True)
+        self.wake_status.setText('Ready! Say "Hey Buddy" when he is idle.')
+        self.buddy._maybe_start_wake()
+
+    def _wake_failed(self, error):
+        self.wake_status.setText('Wake setup failed: ' + error)
+        self.wake_box.blockSignals(True)
+        self.wake_box.setChecked(False)
+        self.wake_box.blockSignals(False)
+
+    def _wake_cleanup(self):
+        self._wake_setup_worker.deleteLater()
+        self._wake_setup_thread.deleteLater()
+        self._wake_setup_worker = self._wake_setup_thread = None
+        self.wake_box.setEnabled(True)
 
     def save_name(self):
         try:
