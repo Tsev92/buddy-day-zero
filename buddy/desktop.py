@@ -98,6 +98,8 @@ class ChatDialog(QDialog):
         self.speaker = Speaker(self)
         self.speaker.speakingChanged.connect(self.speaking_changed)
         self.speaker.error.connect(self.voice_failed)
+        self._heard_speaker = False
+        self._reply_for_bubble = ''
 
     def append(self, role, message):
         from html import escape
@@ -196,6 +198,11 @@ class ChatDialog(QDialog):
             self._send_transcription = True
         else:
             try:
+                import wave
+                from io import BytesIO
+                with wave.open(BytesIO(value), 'rb') as w:
+                    duration = int(1000 * w.getnframes() / max(1, w.getframerate()))
+                self.buddy.bubbles.begin(self._reply_for_bubble, duration)
                 self.speaker.play_wav(value)
                 self.status.setText('')
             except Exception as exc:
@@ -216,6 +223,12 @@ class ChatDialog(QDialog):
 
     def speaking_changed(self, active):
         self.buddy.face.mood = 'speaking' if active else 'idle'
+        if active:
+            self._heard_speaker = True
+        elif self._heard_speaker:
+            self._heard_speaker = False
+            self.buddy.bubbles.speaking_finished()
+            QTimer.singleShot(850, self._resume_conversation)
 
     def send(self):
         message = self.input.text().strip()
@@ -242,6 +255,7 @@ class ChatDialog(QDialog):
         self.append('assistant', answer)
         self.status.setText('')
         self.buddy.face.express('curious', 2.0)
+        self._reply_for_bubble = answer
         if self.voice_thread is None:
             self.status.setText('Preparing speech…')
             self._voice_task('speak', answer)
