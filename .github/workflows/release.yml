@@ -18,6 +18,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate Python sources before publishing
+        run: |
+          python -m compileall -q app.py update_helper.py buddy
+          python - <<'PY'
+          from pathlib import Path
+          from buddy.version import VERSION
+          assert VERSION == Path("VERSION.txt").read_text().strip()
+          assert Path("buddy/audio.py").exists(), "Missing voice module"
+          print("Python syntax and release version validated.")
+          PY
       - name: Build release archive and checksum
         env:
           RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name || '' }}
