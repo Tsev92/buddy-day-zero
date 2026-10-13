@@ -23,6 +23,7 @@ class Face(QWidget):
         self.update_percent = None
         self.celebrating = False
         self.celebrate_ticks = 0
+        self.wake_active = False
         self.tick = 0
         self.blink_amount = 0.0
         self.blink_until = 0.0
