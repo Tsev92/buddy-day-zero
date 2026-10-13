@@ -157,6 +157,28 @@ class ChatDialog(QDialog):
             if self.conversation_mode:
                 self.toggle_conversation_mode()
 
+    def toggle_conversation_mode(self):
+        if self.conversation_mode:
+            self.conversation_mode = False
+            self.conversation_button.setText('Start Conversation Mode')
+            self.status.setText('Conversation ended.')
+            if self.mic_recording:
+                self.monitor.stop()
+                self.mic.cancel()
+                self.mic_recording = False
+                self.mic_button.setText('Record')
+                self.buddy.face.mood = 'idle'
+            return
+        self.conversation_mode = True
+        self.conversation_button.setText('End Conversation Mode')
+        if not self.mic_recording and self.worker_thread is None and self.voice_thread is None:
+            self.toggle_microphone()
+
+    def _resume_conversation(self):
+        if self.conversation_mode and self.isVisible() and not self.mic_recording:
+            if self.worker_thread is None and self.voice_thread is None:
+                self.toggle_microphone()
+
     def _voice_task(self, action, value):
         if self.voice_thread is not None: return
         self.voice_action = action
