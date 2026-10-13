@@ -455,6 +455,7 @@ class DesktopBuddy(QMainWindow):
         self.wake_listener = WakeListener(self.core.data_dir, lambda: Microphone(self), self)
         self.wake_listener.heard.connect(self.open_conversation)
         self.wake_listener.failed.connect(self._wake_warning)
+        self.wake_listener.stateChanged.connect(self._wake_changed)
         QTimer.singleShot(1600, self._maybe_start_wake)
         # Restart-time acknowledgement is shown only after the installer succeeded.
         from pathlib import Path
