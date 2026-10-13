@@ -1,5 +1,5 @@
 """Standalone desktop shell around the original Buddy face and Day Zero brain."""
-from PySide6.QtCore import QObject, Qt, QThread, Signal, QEvent, QSettings
+from PySide6.QtCore import QObject, Qt, QThread, Signal, QEvent, QSettings, QTimer
 from PySide6.QtGui import QFont, QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QMenu,
@@ -8,6 +8,8 @@ from .face import Face
 from .version import VERSION
 from .audio import Microphone, Speaker, transcribe_wav, synthesize_wav
 from .updates import check_release, download_verified, UpdateError
+from .bubbles import BubbleController
+from .listening import SilenceDetector
 
 STYLE = """QWidget { background: #101925; color: #e6f3ff; font-family: 'Segoe UI', sans-serif; }
 QPushButton { background: #253b51; border: 1px solid #436079; border-radius: 8px; padding: 7px 11px; }
@@ -73,6 +75,9 @@ class ChatDialog(QDialog):
         self.mic_button.clicked.connect(self.toggle_microphone)
         row.addWidget(self.mic_button)
         layout.addLayout(row)
+        self.conversation_button = QPushButton('Start Conversation Mode')
+        self.conversation_button.clicked.connect(self.toggle_conversation_mode)
+        layout.addWidget(self.conversation_button)
         self.status = QLabel('')
         layout.addWidget(self.status)
         for message in buddy.memory.recent(80):
@@ -84,6 +89,12 @@ class ChatDialog(QDialog):
         self.voice_worker = None
         self.mic = Microphone(self)
         self.mic_recording = False
+        self._mic_offset = 0
+        self._detector = None
+        self.conversation_mode = False
+        self.monitor = QTimer(self)
+        self.monitor.setInterval(120)
+        self.monitor.timeout.connect(self._poll_recording)
         self.speaker = Speaker(self)
         self.speaker.speakingChanged.connect(self.speaking_changed)
         self.speaker.error.connect(self.voice_failed)
@@ -97,6 +108,7 @@ class ChatDialog(QDialog):
     def toggle_microphone(self):
         if self.mic_recording:
             self.mic_recording = False
+            self.monitor.stop()
             self.mic_button.setText('🎙 Record')
             try:
                 audio = self.mic.stop()
@@ -111,9 +123,12 @@ class ChatDialog(QDialog):
         try:
             self.mic.start()
             self.mic_recording = True
-            self.mic_button.setText('■ Stop')
+            self._mic_offset = 0
+            self._detector = SilenceDetector()
+            self.monitor.start()
+            self.mic_button.setText('■ Cancel')
             self.buddy.face.mood = 'listening'
-            self.status.setText('Recording… click Stop when finished.')
+            self.status.setText('Listening… pause when you finish speaking.')
         except Exception as exc:
             self.voice_failed(str(exc))
 
