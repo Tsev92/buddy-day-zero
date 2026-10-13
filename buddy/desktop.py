@@ -160,6 +160,11 @@ class DesktopBuddy(QMainWindow):
         root = QWidget(); layout = QVBoxLayout(root)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addWidget(self.face, 1)
+        # Visible version marker for verifying an in-app update without opening settings.
+        self.build_label = QLabel(f'DAY ZERO  ·  v{VERSION}')
+        self.build_label.setAlignment(Qt.AlignCenter)
+        self.build_label.setStyleSheet('color: #90b2c9; font-size: 11px; padding: 1px;')
+        layout.addWidget(self.build_label)
         controls = QHBoxLayout()
         chat = QPushButton('💬 Talk')
         chat.clicked.connect(self.open_chat)
