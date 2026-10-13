@@ -66,6 +66,11 @@ class Face(QWidget):
     def animate(self):
         now = time.monotonic()
         self.tick += 1
+        if self.celebrating:
+            self.celebrate_ticks += 1
+            if self.celebrate_ticks > 115:
+                self.celebrating = False
+                self.progress(None)
         if now >= self.expression_until and self.expression != "neutral":
             self.expression = "neutral"
         if now >= self.next_blink:
@@ -114,7 +119,7 @@ class Face(QWidget):
             'listening':'#49e3f4', 'thinking':'#9676f5',
             'error':'#ff657b', 'speaking':'#55cfe7'
         }
-        border = QColor(status_colors.get(self.mood, border_colors.get(e, '#55cfe7')))
+        border = self.border_color()
         rate = .24 if e == 'sleepy' else (4.5 if self.mood == 'speaking' else 1.15)
         pulse = .72 + .28 * math.sin(t * rate)
         if self.mood == 'speaking':
@@ -125,6 +130,29 @@ class Face(QWidget):
             glow.setAlpha(int(alpha * pulse))
             p.setPen(QPen(glow, thickness, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             p.drawRoundedRect(QRectF(inset,inset,320-2*inset,180-2*inset),36,36)
+        if self.update_percent is not None and not self.celebrating:
+            p.setBrush(Qt.NoBrush)
+            for x in (105, 215):
+                p.setPen(QPen(QColor('#586181'), 7))
+                p.drawEllipse(QRectF(x-27, 51, 54, 54))
+                p.setPen(QPen(QColor('#a8ecff'), 7, Qt.SolidLine, Qt.RoundCap))
+                p.drawArc(QRectF(x-27, 51, 54, 54), 90 * 16,
+                          -int(min(100, self.update_percent) * 3.6 * 16))
+            p.setPen(QColor('#e3eaff'))
+            p.drawText(QRectF(0, 122, 320, 25), Qt.AlignCenter,
+                       str(int(self.update_percent)) + '%')
+            p.end()
+            return
+        if self.celebrating:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor('#ffe49b'))
+            for i in range(12):
+                angle = i * 1.87 + self.tick * .09
+                radius = 58 + 15 * math.sin(i * 1.9)
+                x = 160 + radius * math.cos(angle) * 1.8
+                y = 88 + radius * math.sin(angle)
+                size = 3.2 + i % 3
+                p.drawEllipse(QRectF(x-size, y-size, size*2, size*2))
         p.save()
         p.translate(160,93)
         if e == "curious": p.rotate(3.2)
