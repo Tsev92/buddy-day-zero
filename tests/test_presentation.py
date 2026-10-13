@@ -68,6 +68,19 @@ class PresentationTests(unittest.TestCase):
             buddy.wake_listener.stop()
             buddy.close()
 
+    def test_waveform_follows_audio_pauses(self):
+        output = io.BytesIO()
+        with wave.open(output, 'wb') as sound:
+            sound.setnchannels(1)
+            sound.setsampwidth(2)
+            sound.setframerate(16000)
+            frames = [0]*1600 + [int(12000*math.sin(i*.15)) for i in range(3200)] + [0]*1600
+            sound.writeframes(struct.pack('<%dh'%len(frames),*frames))
+        levels = voice_envelope(output.getvalue())
+        self.assertGreater(max(levels), .4)
+        self.assertEqual(levels[0],0.)
+        self.assertEqual(levels[-1],0.)
+
     def test_ends_speech_without_click(self):
         d = SilenceDetector()
         base = d.began
