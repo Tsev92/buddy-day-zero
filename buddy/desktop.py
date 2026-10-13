@@ -585,7 +585,7 @@ class DesktopBuddy(QMainWindow):
         self.update_worker = UpdateTask(action,release,self.core.data_dir.parent/'.buddy_update')
         self.update_worker.moveToThread(self.update_thread)
         self.update_thread.started.connect(self.update_worker.run)
-        self.update_worker.progress.connect(self.face.progress)
+        self.update_worker.progress.connect(lambda _percent: self.face.progress(-1))
         self.update_worker.finished.connect(self._update_finished)
         self.update_worker.failed.connect(self._update_failed)
         self.update_worker.finished.connect(self.update_thread.quit)
@@ -613,12 +613,12 @@ class DesktopBuddy(QMainWindow):
                 f"Version {result['version']} is available.\n\n{result['notes'][:500]}\n\nDownload and install?",
                 QMessageBox.Yes | QMessageBox.No)
             if answer == QMessageBox.Yes:
-                self.face.progress(2)
+                self.face.progress(-1)
                 self._queued_release = result
         else:
             # The user approved before download. Do not ask a second time.
             self._restart_archive = result
-            self.face.progress(95)
+            self.face.progress(-1)
             self._announce_restart()
 
     def _announce_restart(self):
