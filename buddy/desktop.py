@@ -30,6 +30,7 @@ class ReplyTask(QObject):
         except Exception as exc: self.failed.emit(str(exc))
 
 class UpdateTask(QObject):
+    progress = Signal(int)
     finished = Signal(object)
     failed = Signal(str)
     def __init__(self, action, release=None, folder=None):
@@ -37,7 +38,7 @@ class UpdateTask(QObject):
     def run(self):
         try:
             if self.action == 'check': self.finished.emit(check_release())
-            else: self.finished.emit(download_verified(self.release,self.folder))
+            else: self.finished.emit(download_verified(self.release,self.folder,self.progress.emit))
         except Exception as exc: self.failed.emit(str(exc))
 
 class VoiceTask(QObject):
@@ -423,6 +424,7 @@ class DesktopBuddy(QMainWindow):
         self.update_worker = UpdateTask(action,release,self.core.data_dir.parent/'.buddy_update')
         self.update_worker.moveToThread(self.update_thread)
         self.update_thread.started.connect(self.update_worker.run)
+        self.update_worker.progress.connect(self.face.progress)
         self.update_worker.finished.connect(self._update_finished)
         self.update_worker.failed.connect(self._update_failed)
         self.update_worker.finished.connect(self.update_thread.quit)
