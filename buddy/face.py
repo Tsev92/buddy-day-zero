@@ -61,7 +61,7 @@ class Face(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#121528"))
+        # Leave the area outside Buddy's rounded face transparent in the frameless window.
         w,h = self.width(),self.height()
         s = min(w/320, h/180)
         p.translate((w-320*s)/2,(h-180*s)/2)
