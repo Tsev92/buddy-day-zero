@@ -75,6 +75,9 @@ def main():
             time.sleep(.2)
         else: raise RuntimeError('Buddy did not exit; update cancelled.')
         count=apply(root,Path(args.archive))
+        # The next launch alone may celebrate 100% after installation succeeded.
+        version=(root/'VERSION.txt').read_text(encoding='utf8').strip()
+        (root/'.buddy_update'/'completed_version.txt').write_text(version,encoding='utf8')
         log.write_text(f'Updated {count} application files successfully.\n',encoding='utf8')
     except Exception as exc:
         log.write_text(f'Update failed: {exc}\n',encoding='utf8')
