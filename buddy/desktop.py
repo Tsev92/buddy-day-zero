@@ -3,13 +3,14 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, QEvent, QSettings, QTim
 from PySide6.QtGui import QFont, QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QMenu,
-    QTextBrowser, QVBoxLayout, QWidget, QMessageBox)
+    QTextBrowser, QVBoxLayout, QWidget, QMessageBox, QCheckBox)
 from .face import Face
 from .version import VERSION
 from .audio import Microphone, Speaker, transcribe_wav, synthesize_wav
 from .updates import check_release, download_verified, UpdateError
 from .bubbles import BubbleController
 from .listening import SilenceDetector
+from .wake import WakeListener, prepare_model
 
 STYLE = """QWidget { background: #101925; color: #e6f3ff; font-family: 'Segoe UI', sans-serif; }
 QPushButton { background: #253b51; border: 1px solid #436079; border-radius: 8px; padding: 7px 11px; }
@@ -51,6 +52,24 @@ class VoiceTask(QObject):
         try:
             result = transcribe_wav(self.value) if self.action == 'transcribe' else synthesize_wav(self.value)
             self.finished.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+class WakeSetupTask(QObject):
+    finished = Signal(str)
+    failed = Signal(str)
+    def __init__(self, data_dir):
+        super().__init__()
+        self.data_dir = data_dir
+    def run(self):
+        try:
+            try:
+                import vosk
+            except ImportError:
+                import subprocess, sys
+                subprocess.run([sys.executable,'-m','pip','install','vosk>=0.3.45,<0.4'],
+                               check=True, timeout=240)
+            self.finished.emit(prepare_model(self.data_dir))
         except Exception as exc:
             self.failed.emit(str(exc))
 
