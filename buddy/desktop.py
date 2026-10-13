@@ -124,7 +124,7 @@ class ChatDialog(QDialog):
         self._speech_levels = []
         self._speech_timer = QTimer(self)
         self._speech_timer.setInterval(40)
-        self._speech_timer.timeout.connect(self._sync_speech_visuals
+        self._speech_timer.timeout.connect(self._sync_speech_visuals)
 
     def append(self, role, message):
         from html import escape
