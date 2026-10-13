@@ -110,13 +110,9 @@ class ChatDialog(QDialog):
             self.mic_recording = False
             self.monitor.stop()
             self.mic_button.setText('🎙 Record')
-            try:
-                audio = self.mic.stop()
-                self.buddy.face.mood = 'thinking'
-                self._voice_task('transcribe', audio)
-                self.status.setText('Transcribing your voice…')
-            except Exception as exc:
-                self.voice_failed(str(exc))
+            self.mic.cancel()
+            self.buddy.face.mood = 'idle'
+            self.status.setText('Recording cancelled.')
             return
         if self.worker_thread is not None or self.voice_thread is not None:
             return
