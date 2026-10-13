@@ -89,15 +89,52 @@ class PresentationTests(unittest.TestCase):
             buddy = DesktopBuddy(BuddyCore(Path(folder)), memory, Brain(memory))
             buddy.show()
             bubble = buddy.bubbles
-            bubble.begin('One two three four five six seven eight nine ten.', 1600)
+            message = 'One two three four five six seven eight nine ten.'
+            bubble.begin(message, 1600)
             first = bubble.bubble.content
             QTest.qWait(850)
             self.assertGreater(len(bubble.bubble.content.split()), 1)
             self.assertGreater(len(bubble.bubble.content), len(first))
             QTest.qWait(900)
-            self.assertEqual(bubble.bubble.content,
-                             'One two three four five six seven eight nine ten.')
+            self.assertEqual(bubble.bubble.content, message)
+            self.assertEqual(bubble.full_text, message)
+            self.assertLessEqual(bubble.bubble.height(), buddy.height())
             bubble.stop()
+            buddy.wake_listener.stop()
+            buddy.close()
+
+    def test_one_bubble_autoscrolls_full_long_reply(self):
+        with tempfile.TemporaryDirectory() as folder:
+            memory = Memory(Path(folder))
+            buddy = DesktopBuddy(BuddyCore(Path(folder)), memory, Brain(memory))
+            buddy.show()
+            message = ' '.join('Sentence %s has many wonderful little words.' % i for i in range(35))
+            bubbles = buddy.bubbles
+            bubbles.begin(message, 4000)
+            bubbles.sync_position(2000)
+            self.assertGreater(len(bubbles.bubble.content.split()), 25)
+            self.assertLessEqual(bubbles.bubble.height(), buddy.height())
+            self.assertGreater(bubbles.bubble._scroll_target, 0)
+            first_window = bubbles.bubble.winId()
+            bubbles.sync_position(3900)
+            self.assertEqual(bubbles.bubble.winId(), first_window)
+            bubbles.speaking_finished()
+            self.assertEqual(bubbles.bubble.content, message)
+            self.assertEqual(bubbles.bubble._scroll, bubbles.bubble._scroll_target)
+            self.assertLessEqual(bubbles.bubble.height(), buddy.height())
+            bubbles.stop()
+            buddy.wake_listener.stop()
+            buddy.close()
+
+    def test_empty_or_stalled_caption_shows_full_answer_on_finish(self):
+        with tempfile.TemporaryDirectory() as folder:
+            memory = Memory(Path(folder))
+            buddy = DesktopBuddy(BuddyCore(Path(folder)), memory, Brain(memory))
+            message = 'The complete response should always appear at the end of speech.'
+            buddy.bubbles.begin(message, 5000)
+            buddy.bubbles.speaking_finished()
+            self.assertEqual(buddy.bubbles.bubble.content, message)
+            buddy.bubbles.stop()
             buddy.wake_listener.stop()
             buddy.close()
 
