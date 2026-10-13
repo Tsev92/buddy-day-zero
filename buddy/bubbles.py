@@ -1,7 +1,7 @@
 """Transient comic-style speech bubbles attached to Buddy's floating face."""
 import math
 import re
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QPoint, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QPoint, QPropertyAnimation, QEasingCurve, QElapsedTimer
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont
 from PySide6.QtWidgets import QWidget, QApplication
 
@@ -78,7 +78,9 @@ class BubbleController:
         self.face = face_window
         self.bubble = SpeechBubble()
         self.timer = QTimer(face_window)
-        self.timer.timeout.connect(self._advance)
+        self.timer.setInterval(40)
+        self.timer.timeout.connect(self._tick)
+        self.clock = QElapsedTimer()
         self.hide_timer = QTimer(face_window)
         self.hide_timer.setSingleShot(True)
         self.hide_timer.timeout.connect(self._fade_out)
@@ -100,17 +102,28 @@ class BubbleController:
         self.index = 0
         self.duration_ms = max(1000, int(duration_ms))
         self._active = True
+        self.last_position = -1
+        self.clock.start()
         self._display()
         self.bubble.content = ''
         self.bubble.update()
+        self.timer.start()
+
+    def _tick(self):
+        # Never rely solely on QMediaPlayer.positionChanged: some Windows
+        # audio backends report zero until the clip is almost finished.
+        if self._active:
+            self.sync_position(self.clock.elapsed())
 
     def sync_position(self, position_ms):
         """Reveal words from the actual playback clock, not a separate timer."""
         if not self._active or not self.phrases:
             return
         position_ms = max(0, min(self.duration_ms, int(position_ms)))
+        position_ms = max(position_ms, self.clock.elapsed())
+        position_ms = min(self.duration_ms, position_ms)
         if position_ms < self.last_position:
-            self.last_position = -1
+            position_ms = self.last_position
         self.last_position = position_ms
         # Allocate more time to longer phrases; approximate word onset naturally.
         weights = [max(5, len(part)) for part in self.phrases]
