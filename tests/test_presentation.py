@@ -7,7 +7,7 @@ from unittest.mock import patch
 import io, math, struct, wave
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from buddy.bubbles import BubbleController
@@ -307,6 +307,39 @@ class PresentationTests(unittest.TestCase):
             self.assertEqual(len(reloaded.reflections()),1)
             self.assertEqual(reloaded.reflection_calls_today(reloaded.reflections()[0]['created'][:10]),1)
             reloaded.db.close()
+
+    def test_reflection_rejects_unverifiable_evidence(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            memory.add('user','Why is kindness important?')
+            memory.add('assistant','I wonder whether kindness means telling the truth gently.')
+            brain=Brain(memory,key='not-sent-to-network')
+            fake_report={'reflection':'I traveled to the sea yesterday.',
+                         'evidence':'I swam in the sea yesterday.',
+                         'ideas':[{'title':'Ocean swimming','detail':'I remember swimming','kind':'curiosity'}],
+                         'belief':None}
+            response=json.dumps({'choices':[{'message':{'content':json.dumps(fake_report)}}]}).encode()
+            with patch('buddy.brain.urllib.request.urlopen',return_value=io.BytesIO(response)):
+                self.assertFalse(brain.reflect())
+            self.assertEqual(memory.reflections(),[])
+            self.assertEqual(memory.ideas(),[])
+            memory.db.close()
+
+    def test_update_approval_defers_download_until_dialog_closes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            buddy=DesktopBuddy(BuddyCore(Path(folder)),memory,Brain(memory))
+            release={'newer':True,'version':'0.99.0','notes':'A test release'}
+            with patch('buddy.desktop.QMessageBox.question',return_value=QMessageBox.Yes), \
+                 patch.object(buddy,'_run_update_task') as run_task:
+                buddy._update_finished(release)
+                run_task.assert_not_called()
+                buddy._show_update_offer(release)
+                self.app.processEvents()
+                run_task.assert_called_once_with('download',release)
+            buddy.wake_listener.stop()
+            buddy.close()
 
     def test_microphone_settings_and_reflection_budget(self):
         with tempfile.TemporaryDirectory() as folder:
