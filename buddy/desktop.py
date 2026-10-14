@@ -3,7 +3,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, QEvent, QSettings, QTim
 from PySide6.QtGui import QFont, QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QMenu,
-    QTextBrowser, QVBoxLayout, QWidget, QMessageBox, QCheckBox)
+    QTextBrowser, QVBoxLayout, QWidget, QMessageBox, QCheckBox, QComboBox)
 from .face import Face
 from .version import VERSION
 from .audio import Microphone, Speaker, transcribe_wav, synthesize_wav
@@ -139,6 +139,7 @@ class ChatDialog(QDialog):
             self.mic_button.setText('🎙 Record')
             self.mic.cancel()
             self.buddy.face.mood = 'idle'
+            self.buddy.face.mic_level = 0
             self.status.setText('Recording cancelled.')
             return
         if self.worker_thread is not None or self.voice_thread is not None:
@@ -161,6 +162,12 @@ class ChatDialog(QDialog):
             return
         chunk, self._mic_offset = self.mic.read_since(self._mic_offset)
         decision = self._detector.inspect(chunk)
+        if chunk:
+            import audioop
+            try:
+                self.buddy.face.mic_level = min(1.0, audioop.rms(chunk, 2)/11000)
+            except (ValueError, audioop.error):
+                self.buddy.face.mic_level = 0.0
         if decision == 'send':
             self.mic_recording = False
             self.monitor.stop()
@@ -168,6 +175,7 @@ class ChatDialog(QDialog):
             try:
                 audio = self.mic.stop()
                 self.buddy.face.mood = 'thinking'
+                self.buddy.face.mic_level = 0
                 self._voice_task('transcribe', audio)
             except Exception as exc:
                 self.voice_failed(str(exc))
@@ -360,10 +368,59 @@ class SettingsDialog(QDialog):
         self.wake_status.setWordWrap(True)
         layout.addWidget(self.wake_status)
         self._wake_setup_thread = None
+        layout.addWidget(QLabel('Customize Buddy'))
+        self.face_preview = Face()
+        self.face_preview.setFixedSize(260, 147)
+        layout.addWidget(self.face_preview)
+        self.face_controls = {}
+        options = (
+            ('eyes','Eyes', ('classic','pupils','round','sleepy','pixel')),
+            ('mouth','Mouth', ('classic','smile','wry','cat','pixel','lips')),
+            ('eyebrows','Eyebrows', ('single','both','none')),
+            ('color','Face color', ('#a8ecff','#bda7ff','#9becba','#ffc58f','#ffc1de')))
+        )
+        current = {'eyes':buddy.face.eye_style,'mouth':buddy.face.mouth_style,
+                   'eyebrows':buddy.face.eyebrow_style,'color':buddy.face.eye_color}
+        for key, title, choices in options:
+            layout.addWidget(QLabel(title))
+            combo = QComboBox()
+            for choice in choices:
+                label = {'#a8ecff':'Cyan','#bda7ff':'Lavender',
+                         '#9becba':'Mint','#ffc58f':'Peach','#ffc1de':'Pink',
+                         'single':'Signature single eyebrow'}.get(choice,choice.title())
+                combo.addItem(label,choice)
+            combo.setCurrentIndex(max(0, combo.findData(current[key])))
+            combo.currentIndexChanged.connect(self.preview_customization)
+            self.face_controls[key] = combo
+            layout.addWidget(combo)
+        self.preview_customization()
+        apply_button = QPushButton('Apply Buddy appearance')
+        apply_button.clicked.connect(self.apply_customization)
+        layout.addWidget(apply_button)
+        reset_button = QPushButton('Restore default appearance')
+        reset_button.clicked.connect(self.reset_customization)
+        layout.addWidget(reset_button)
         layout.addWidget(QLabel(f'Buddy Day Zero v{VERSION}'))
         update = QPushButton('Check for updates…')
         update.clicked.connect(self.buddy.check_updates)
         layout.addWidget(update)
+
+    def preview_customization(self, *_):
+        options = {key: widget.currentData() for key,widget in self.face_controls.items()}
+        self.face_preview.customize(**options)
+
+    def apply_customization(self):
+        options = {key: widget.currentData() for key,widget in self.face_controls.items()}
+        self.buddy.face.customize(**options)
+        for key,value in options.items():
+            self.buddy._settings.setValue('appearance/'+key,value)
+
+    def reset_customization(self):
+        defaults = {'eyes':'pupils','mouth':'classic',
+                    'eyebrows':'single','color':'#a8ecff'}
+        for key,widget in self.face_controls.items():
+            widget.setCurrentIndex(widget.findData(defaults[key]))
+        self.apply_customization()
 
     def toggle_wake(self, enabled):
         if not enabled:
@@ -453,6 +510,11 @@ class DesktopBuddy(QMainWindow):
         self._drag_window_origin = None
         self._did_drag = False
         self._settings = QSettings('BuddyDayZero', 'Desktop')
+        self.face.customize(
+            eyes=self._settings.value('appearance/eyes','pupils'),
+            mouth=self._settings.value('appearance/mouth','classic'),
+            eyebrows=self._settings.value('appearance/eyebrows','single'),
+            color=self._settings.value('appearance/color','#a8ecff'))
         # Keyboard alternatives remain available even without window chrome.
         for sequence, callback in (('Ctrl+T', self.open_chat),
                                    ('Ctrl+,', self.open_settings),
