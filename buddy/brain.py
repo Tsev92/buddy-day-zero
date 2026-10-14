@@ -46,16 +46,17 @@ class Brain:
         self.memory.add('user', text)
         self.memory.add('assistant', answer)
         # Save only explicit, grounded emotional developments, not guessed feelings.
-        import re
-        patterns = (
-            (r'\\b(?:i feel|i am|i\\'m)\\s+(?:really\\s+)?(?:happy|glad|joyful|excited)\\b','joy',1),
-            (r'\\b(?:i feel|i am|i\\'m)\\s+(?:really\\s+)?(?:curious|intrigued)\\b','curiosity',1),
-            (r'\\b(?:i feel|i am|i\\'m)\\s+(?:really\\s+)?(?:frustrated|annoyed)\\b','frustration',1),
-            (r'\\b(?:i feel|i am|i\\'m)\\s+(?:really\\s+)?(?:sad|melancholy)\\b','melancholy',1),
-            (r'\\b(?:i feel|i am|i\\'m)\\s+(?:really\\s+)?(?:confident|proud)\\b','confidence',1),
+        lowered = answer.lower()
+        emotional_words = (
+            ('joy', ('i feel happy','i am happy',"i'm happy",'i feel excited',"i'm excited")),
+            ('curiosity', ('i feel curious',"i'm curious",'i am intrigued')),
+            ('frustration', ('i feel frustrated',"i'm frustrated",'i am annoyed')),
+            ('melancholy', ('i feel sad',"i'm sad",'i feel melancholy')),
+            ('confidence', ('i feel confident',"i'm confident",'i feel proud')),
+            ('affection', ('i care about','i feel affectionate')),
         )
-        for pattern,emotion,impact in patterns:
-            if re.search(pattern, answer, re.I):
-                self.memory.experience(answer[:180], emotion, impact)
+        for emotion, phrases in emotional_words:
+            if any(phrase in lowered for phrase in phrases):
+                self.memory.experience(answer[:180], emotion, 1)
                 break
         return answer
