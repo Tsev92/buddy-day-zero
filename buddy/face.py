@@ -33,6 +33,9 @@ class Face(QWidget):
         self.celebrating = False
         self.celebrate_ticks = 0
         self.wake_active = False
+        self.camera_active = False
+        self.camera_analyzing = False
+        self.tracked_face = None
         self.tick = 0
         self.blink_amount = 0.0
         self.blink_until = 0.0
@@ -100,11 +103,15 @@ class Face(QWidget):
             self.blink_until = now + 0.18
             self.next_blink = now + random.uniform(2.2, 6.0)
         self.blink_amount = max(0.055, abs(now - (self.blink_until - .09)) / .09) if now < self.blink_until else 1.0
-        if now >= self.next_gaze:
+        if self.tracked_face is None and now >= self.next_gaze:
             self.target_x = random.choice((-16,-10,-5,0,0,5,10,16))
             self.target_y = random.choice((-7,-3,0,0,4,7))
             self.next_gaze = now + random.uniform(.7, 2.3)
-        if self.mood == 'thinking':
+        if self.tracked_face is not None:
+            fx,fy = self.tracked_face
+            self.target_x=max(-15,min(15,-fx*32))
+            self.target_y=max(-9,min(9,fy*19))
+        elif self.mood == 'thinking':
             self.target_x, self.target_y = 8, -12
         elif self.mood == 'listening':
             self.target_x, self.target_y = 0, 0
@@ -185,6 +192,15 @@ class Face(QWidget):
                 y = 88 + radius * math.sin(angle)
                 size = 3.2 + i % 3
                 p.drawEllipse(QRectF(x-size, y-size, size*2, size*2))
+        if self.camera_active:
+            # Privacy LED stays visible even when Buddy blinks or uses no pupils.
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor('#ffbd58'))
+            p.drawEllipse(QRectF(281,17,12,12))
+            p.setPen(QPen(QColor('#222943'),1.4))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(283,20,8,6),1.2,1.2)
+            p.drawEllipse(QRectF(286,21,3,3))
         if self.wake_active and self.update_percent is None:
             p.setPen(Qt.NoPen)
             p.setBrush(QColor('#49e3f4'))
@@ -237,7 +253,19 @@ class Face(QWidget):
             p.setBrush(eye)
             if self.eye_style == 'pixel': p.drawRect(rect)
             else: p.drawRoundedRect(rect,min(width,height)/2,min(width,height)/2)
-            if self.pupil_style != 'none' and height > 17:
+            if self.camera_analyzing and height > 17:
+                p.save()
+                px=cx+max(-10,min(10,self.gaze_x*.6))
+                py=cy+max(-10,min(10,self.gaze_y*.6))
+                p.setPen(QPen(QColor('#24334f'),2.2))
+                p.setBrush(QColor('#24334f'))
+                p.drawRoundedRect(QRectF(px-9,py-7,18,14),3,3)
+                p.drawRect(QRectF(px-4,py-10,8,4))
+                p.setPen(QPen(QColor(self.eye_color),1.5))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(QRectF(px-4,py-4,8,8))
+                p.restore()
+            elif self.pupil_style != 'none' and height > 17:
                 p.save()
                 clip = QPainterPath()
                 if self.eye_style == 'pixel': clip.addRect(rect)
