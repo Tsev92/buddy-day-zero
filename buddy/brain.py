@@ -68,6 +68,8 @@ def safe_response(message, answer, reflections):
         return 'I’m alright. Curious, though I’m still figuring out what that means for me.'
     if kind == 'self_question' and ('?' in answer or SERVICE_PAT.search(answer) or PAST_THOUGHT_PAT.search(answer)):
         return 'I’m curious about how to behave around someone I’ve only just met. I’m still working that out.'
+    if PAST_THOUGHT_PAT.search(answer) and not reflections:
+        return 'I’m not sure yet. I’m still forming an opinion about that.'
     return answer
 
 
