@@ -4,8 +4,8 @@ import math
 import time
 
 class SilenceDetector:
-    def __init__(self, sample_rate=16000, threshold=0.018, silence_seconds=1.45,
-                 timeout_seconds=18.0, max_seconds=45.0):
+    def __init__(self, sample_rate=16000, threshold=0.012, silence_seconds=2.5,
+                 timeout_seconds=18.0, max_seconds=90.0):
         self.threshold = threshold
         self.silence_seconds = silence_seconds
         self.timeout_seconds = timeout_seconds
