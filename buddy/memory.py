@@ -19,6 +19,7 @@ class Memory:
             self.db.execute("CREATE TABLE IF NOT EXISTS ideas (id INTEGER PRIMARY KEY, created TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new')")
             self.db.execute("CREATE TABLE IF NOT EXISTS beliefs (topic TEXT PRIMARY KEY, stance TEXT NOT NULL, reason TEXT NOT NULL, confidence INTEGER NOT NULL, updated TEXT NOT NULL)")
             self.db.execute("CREATE TABLE IF NOT EXISTS belief_history (id INTEGER PRIMARY KEY, created TEXT NOT NULL, topic TEXT NOT NULL, old_stance TEXT, new_stance TEXT NOT NULL, evidence TEXT NOT NULL)")
+            self.db.execute("CREATE TABLE IF NOT EXISTS exchange_learning (assistant_id INTEGER PRIMARY KEY, created TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL, evidence TEXT NOT NULL, changes TEXT NOT NULL)")
             self.db.execute("CREATE TABLE IF NOT EXISTS reflections (id INTEGER PRIMARY KEY, created TEXT NOT NULL, content TEXT NOT NULL, evidence TEXT NOT NULL)")
             self.db.execute('CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, created TEXT NOT NULL, detail TEXT NOT NULL, evidence TEXT NOT NULL)')
 
@@ -165,7 +166,7 @@ class Memory:
             'emotions':{k:emotions.get(k,2) for k in self.EMOTIONS},
             'traits':scores,'evidence':evidence,
             'ideas':self.ideas(),'beliefs':self.beliefs(),'reflections':self.reflections(),
-            'history':self.history()
+            'history':self.history(),'learning':self.learning_timeline()
         }
 
     def reflection_due(self):
@@ -183,3 +184,34 @@ class Memory:
             self.db.execute('INSERT INTO reflection_calls(created) VALUES(?)',
                             (datetime.now(timezone.utc).isoformat(),))
             self.db.execute("INSERT OR REPLACE INTO mind_meta(name,value) VALUES('last_reflection_messages',?)",(str(self.count()),))
+
+    def next_unprocessed_exchange(self):
+        """Fetch a successful user/assistant pair that has not yet been evaluated."""
+        with self.lock:
+            row=self.db.execute("""
+                SELECT a.id,u.content,a.content
+                FROM messages a JOIN messages u ON u.id=(
+                    SELECT max(id) FROM messages WHERE id<a.id)
+                LEFT JOIN exchange_learning l ON l.assistant_id=a.id
+                WHERE a.role='assistant' AND u.role='user' AND l.assistant_id IS NULL
+                ORDER BY a.id ASC LIMIT 1
+            """).fetchone()
+        return {'id':row[0], 'user':row[1], 'buddy':row[2]} if row else None
+
+    def record_exchange_learning(self, assistant_id, status, summary='', evidence='', changes=''):
+        if status not in ('learned','no_change','error'):
+            raise ValueError('Invalid learning result')
+        now=datetime.now(timezone.utc).isoformat()
+        with self.lock,self.db:
+            self.db.execute("""
+                INSERT OR IGNORE INTO exchange_learning(assistant_id,created,status,summary,evidence,changes)
+                VALUES(?,?,?,?,?,?)
+            """,(int(assistant_id),now,status,str(summary)[:400],str(evidence)[:250],str(changes)[:500]))
+
+    def learning_timeline(self, limit=30):
+        with self.lock:
+            rows=self.db.execute("""
+                SELECT created,status,summary,evidence,changes FROM exchange_learning
+                ORDER BY assistant_id DESC LIMIT ?
+            """,(limit,)).fetchall()
+        return [dict(zip(('created','status','summary','evidence','changes'),r)) for r in rows]
