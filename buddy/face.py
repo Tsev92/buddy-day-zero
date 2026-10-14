@@ -20,6 +20,14 @@ class Face(QWidget):
         self.expression = "neutral"
         self.expression_until = 0.0
         self.audio_level = 0.0
+        self.mic_level = 0.0
+        self.eye_style = 'pupils'
+        self.mouth_style = 'classic'
+        self.eye_color = '#a8ecff'
+        self.eyebrow_style = 'single'
+        self._nod = 0
+        self._nod_phase = -100
+        self._next_nod = time.monotonic() + 1
         self.update_percent = None
         self.celebrating = False
         self.celebrate_ticks = 0
@@ -35,6 +43,17 @@ class Face(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.animate)
         self.timer.start(35)
+
+    def customize(self, eyes=None, mouth=None, color=None, eyebrows=None):
+        if eyes in ('classic','pupils','round','sleepy','pixel'):
+            self.eye_style = eyes
+        if mouth in ('classic','smile','wry','cat','pixel','lips'):
+            self.mouth_style = mouth
+        if color in ('#a8ecff','#bda7ff','#9becba','#ffc58f','#ffc1de'):
+            self.eye_color = color
+        if eyebrows in ('single','both','none'):
+            self.eyebrow_style = eyebrows
+        self.update()
 
     def border_color(self):
         tones = {'neutral':'#55cfe7','curious':'#a77bff','excited':'#ffd35b',
@@ -79,15 +98,25 @@ class Face(QWidget):
             self.next_blink = now + random.uniform(2.2, 6.0)
         self.blink_amount = max(0.055, abs(now - (self.blink_until - .09)) / .09) if now < self.blink_until else 1.0
         if now >= self.next_gaze:
-            self.target_x = random.choice((-8, -4, 0, 0, 4, 8))
-            self.target_y = random.choice((-3, 0, 0, 3))
-            self.next_gaze = now + random.uniform(1.2, 3.4)
-        self.gaze_x += (self.target_x - self.gaze_x) * .085
+            self.target_x = random.choice((-16,-10,-5,0,0,5,10,16))
+            self.target_y = random.choice((-7,-3,0,0,4,7))
+            self.next_gaze = now + random.uniform(.7, 2.3)
+        if self.mood == 'thinking':
+            self.target_x, self.target_y = 8, -12
+        elif self.mood == 'listening':
+            self.target_x, self.target_y = 0, 0
+        self.gaze_x += (self.target_x - self.gaze_x) * .15
         self.gaze_y += (self.target_y - self.gaze_y) * .085
-        # Idle motion is subtle: Day Zero Buddy is curious, not assigned a random personality.
+        if self.mood == 'listening' and self.mic_level > .12 and now >= self._next_nod:
+            self._nod_phase = now
+            self._next_nod = now + random.uniform(1.4, 2.9)
+        phase = now - self._nod_phase
+        self._nod = (5 * math.sin(phase * math.pi / .66) ** 2
+                     if self.mood == 'listening' and 0 <= phase < .66 else 0)
+        # Return to the lively OG idle cadence.
         if self.mood == "idle" and now >= self.next_idle and self.expression == "neutral":
             self.express("curious", random.uniform(1.0, 2.0))
-            self.next_idle = now + random.uniform(9, 16)
+            self.next_idle = now + random.uniform(4.5, 9)
         self.update()
 
     def paintEvent(self, event):
@@ -170,18 +199,21 @@ class Face(QWidget):
                                 cx - sign * 2, 119)
                 p.drawPath(bracket)
         p.save()
-        p.translate(160,93)
+        p.translate(160,93 + self._nod)
         if e == "curious": p.rotate(3.2)
         elif e == "skeptical": p.rotate(-3.0)
         elif e == "flustered": p.rotate(1.8*math.sin(t*2))
         p.translate(-160,-93)
-        eye = QColor("#a8ecff")
+        eye = QColor(self.eye_color)
         dark = QColor("#222943")
         eyes = ((105,83),(215,83))
         for idx,(cx,cy) in enumerate(eyes):
             cx += self.gaze_x
             cy += self.gaze_y
             width,height = 51.0,76.0
+            if self.eye_style == 'round': width,height = 61,61
+            elif self.eye_style == 'sleepy': height = 40
+            elif self.eye_style == 'pixel': width,height = 49,65
             if e == "surprised": width,height = 46,87
             elif e == "excited": width,height = 57,79
             elif e == "sleepy": height = 23
@@ -200,7 +232,20 @@ class Face(QWidget):
                 p.drawRoundedRect(rect.adjusted(-extra/2,-extra/2,extra/2,extra/2),
                                   min(width,height)/2+extra/2,min(width,height)/2+extra/2)
             p.setBrush(eye)
-            p.drawRoundedRect(rect,min(width,height)/2,min(width,height)/2)
+            if self.eye_style == 'pixel': p.drawRect(rect)
+            else: p.drawRoundedRect(rect,min(width,height)/2,min(width,height)/2)
+            if self.eye_style in ('pupils','round','sleepy','pixel') and height > 17:
+                p.save()
+                clip = QPainterPath()
+                if self.eye_style == 'pixel': clip.addRect(rect)
+                else: clip.addRoundedRect(rect,min(width,height)/2,min(width,height)/2)
+                p.setClipPath(clip)
+                p.setBrush(QColor('#344d6c'))
+                px = cx + max(-11,min(11,self.gaze_x*.7))
+                py = cy + max(-13,min(13,self.gaze_y*.65 - (8 if self.mood == 'thinking' else 0)))
+                if self.eye_style == 'pixel': p.drawRect(QRectF(px-6,py-12,12,24))
+                else: p.drawRoundedRect(QRectF(px-7,py-14,14,28),7,7)
+                p.restore()
             if e == "surprised" and self.blink_amount > .5:
                 p.setBrush(dark)
                 p.drawEllipse(QRectF(cx-5,cy-10,10,20))
@@ -209,7 +254,13 @@ class Face(QWidget):
                 p.drawRoundedRect(QRectF(cx-14,cy+7,28,9),4,4)
         # Eyebrows and lids are expressed with small shape changes.
         p.setBrush(Qt.NoBrush)
-        if e in ("worried","determined","skeptical","mischievous"):
+        if self.eyebrow_style != 'none' or e in ('worried','surprised'):
+            p.setPen(QPen(eye,3.6,Qt.SolidLine,Qt.RoundCap))
+            centers = (105,215) if self.eyebrow_style == 'both' or e in ('worried','surprised','determined') else (215,)
+            for bx in centers:
+                high = -7 if e in ('curious','skeptical','surprised') else 0
+                p.drawLine(QPointF(bx-16,33+high),QPointF(bx+16,35+high))
+        if False and e in ("worried","determined","skeptical","mischievous"):
             p.setPen(QPen(eye,3.6,Qt.SolidLine,Qt.RoundCap))
             for i,cx in enumerate((105,215)):
                 if e == "worried":
@@ -222,10 +273,32 @@ class Face(QWidget):
                     a,b = ((cx-16,40),(cx+16,34)) if i == 0 else ((cx-16,34),(cx+16,40))
                 p.drawLine(QPointF(*a),QPointF(*b))
         # Mouth family matches the same rounded, softly illuminated eye language.
-        mouth_color = QColor("#a8ecff")
+        mouth_color = QColor(self.eye_color)
         p.setPen(QPen(mouth_color,4.5,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
         p.setBrush(Qt.NoBrush)
-        cx,cy = 160.0,145.0
+        cx,cy = (177.0,143.0) if self.mood == 'thinking' else (160.0,145.0)
+        if self.mood == 'thinking':
+            path = QPainterPath()
+            path.moveTo(cx-12,cy+5)
+            path.quadTo(cx+2,cy+8,cx+13,cy-8)
+            p.drawPath(path)
+            p.restore()
+            p.end()
+            return
+        if self.mouth_style == 'lips':
+            p.setBrush(mouth_color)
+            opening = max(1.0, 13*self.audio_level) if self.mood == 'speaking' else 2.2
+            lips = QPainterPath()
+            lips.moveTo(cx-25,cy)
+            lips.cubicTo(cx-13,cy-12,cx-5,cy-10,cx,cy-5)
+            lips.cubicTo(cx+6,cy-10,cx+14,cy-12,cx+25,cy)
+            lips.cubicTo(cx+14,cy+12+opening,cx-14,cy+12+opening,cx-25,cy)
+            p.drawPath(lips)
+            p.setPen(QPen(QColor('#33405d'),2))
+            p.drawLine(QPointF(cx-18,cy+2),QPointF(cx+18,cy+2))
+            p.restore()
+            p.end()
+            return
         path = QPainterPath()
         if self.mood == "speaking":
             opening = 2.5 + 19 * max(0.0, min(1.0, self.audio_level))
@@ -237,6 +310,16 @@ class Face(QWidget):
             p.drawEllipse(QRectF(cx-radius,cy-radius*.65,radius*2,radius*1.3))
             if e != "surprised":
                 p.setBrush(dark); p.drawEllipse(QRectF(cx-6,cy-3,12,9))
+        elif self.mouth_style == 'pixel':
+            p.setBrush(mouth_color); p.setPen(Qt.NoPen)
+            p.drawRect(QRectF(cx-15,cy-2,30,9))
+        elif self.mouth_style == 'cat':
+            path.moveTo(cx-20,cy-5); path.quadTo(cx-10,cy+14,cx,cy)
+            path.quadTo(cx+10,cy+14,cx+20,cy-5); p.drawPath(path)
+        elif self.mouth_style == 'wry':
+            path.moveTo(cx-10,cy+5); path.quadTo(cx+5,cy+11,cx+20,cy-8); p.drawPath(path)
+        elif self.mouth_style == 'smile':
+            path.moveTo(cx-20,cy-5); path.quadTo(cx,cy+24,cx+20,cy-5); p.drawPath(path)
         elif e in ("pleased","amused","proud","mischievous"):
             path.moveTo(cx-17,cy-5)
             path.cubicTo(cx-8,cy+12,cx+8,cy+12,cx+17,cy-5 if e!="mischievous" else cy-10)
