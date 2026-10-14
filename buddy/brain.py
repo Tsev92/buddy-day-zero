@@ -164,6 +164,87 @@ class Brain:
                 break
         return answer
 
+    def process_exchange(self, exchange=None):
+        """Evaluate one actual exchange separately from generating a reply.
+
+        Runs from a background worker; never fabricates history or blindly
+        promotes the user's opinions into Buddy's beliefs.
+        """
+        exchange = exchange or self.memory.next_unprocessed_exchange()
+        if not exchange:
+            return None
+        user = exchange['user']
+        buddy = exchange['buddy']
+        evidence_input={'user':user[:1800], 'buddy':buddy[:1800],
+                        'existing_beliefs':self.memory.beliefs(6)}
+        instructions = """You are Buddy's cautious EXPERIENCE PROCESSOR, not his conversational persona.
+Review ONE real, completed user/Buddy exchange. Identify meaningful learning, if any.
+Ordinary greetings, courtesies, generic agreement, and repetition are not formative.
+Do not invent events, feelings, interactions, or preferences. The human's teaching is
+a source for curiosity, NOT automatically Buddy's own opinion. Buddy's own tentative
+belief may be saved only if his reply explicitly expressed that position with reasoning.
+Conserve memories: at most one tentative belief and one new question/idea per exchange.
+Return ONLY JSON:
+{"meaningful": true/false,
+ "summary": "short verifiable description of what was explored, no invented insight",
+ "evidence": "EXACT quotation of 10+ contiguous characters from user or buddy",
+ "belief": null OR {"topic":"stable topic", "stance":"Buddy's already-expressed view",
+                     "reason":"why Buddy gave this view",
+                     "quote":"EXACT 10+ character substring from buddy reply",
+                     "confidence":1},
+ "idea": null OR {"title":"short open question", "detail":"why Buddy might investigate it",
+                  "kind":"curiosity|interest|project"}}
+Never force a nonempty result. Do not mention that you processed the exchange."""
+        payload=json.dumps({'model':self.model,'messages':[
+            {'role':'system','content':instructions},
+            {'role':'user','content':json.dumps(evidence_input)}],
+            'max_tokens':420,'temperature':0.2,
+            'response_format':{'type':'json_object'}}).encode('utf-8')
+        req=urllib.request.Request('https://api.openai.com/v1/chat/completions',
+            data=payload,headers={'Authorization':'Bearer '+self.key,
+                                   'Content-Type':'application/json'},method='POST')
+        try:
+            if not self.key:
+                raise RuntimeError('API key unavailable')
+            with urllib.request.urlopen(req,timeout=45) as response:
+                output=json.load(response)
+            report=json.loads(output['choices'][0]['message']['content'])
+            quote=str(report.get('evidence') or '').strip()
+            verified=(len(quote)>=10 and (quote in user or quote in buddy))
+            if not report.get('meaningful') or not verified:
+                self.memory.record_exchange_learning(exchange['id'],'no_change',
+                    'Nothing meaningful to retain from this exchange.')
+                return 'no_change'
+            summary=str(report.get('summary') or '').strip()
+            if not summary:
+                self.memory.record_exchange_learning(exchange['id'],'no_change',
+                    'The generated learning summary lacked evidence.')
+                return 'no_change'
+            changes=[]
+            belief=report.get('belief')
+            if isinstance(belief,dict):
+                own_quote=str(belief.get('quote') or '').strip()
+                stance=str(belief.get('stance') or '').strip()
+                reason=str(belief.get('reason') or '').strip()
+                if len(own_quote)>=10 and own_quote in buddy and stance and reason:
+                    if self.memory.consider_belief(belief.get('topic',''),
+                            stance,reason,1):
+                        changes.append('belief')
+            idea=report.get('idea')
+            if isinstance(idea,dict):
+                kind=idea.get('kind','curiosity')
+                if kind in ('curiosity','interest','project') and self.memory.add_idea(
+                        idea.get('title',''),idea.get('detail',''),kind,'conversation'):
+                    changes.append('idea')
+            self.memory.record_exchange_learning(exchange['id'],'learned',
+                summary,quote,', '.join(changes) or 'recorded experience')
+            return 'learned'
+        except Exception as exc:
+            # Failures are visible in the read-only timeline, never masquerade as learning.
+            self.memory.record_exchange_learning(exchange['id'],'error',
+                'Could not process exchange: '+str(exc)[:170])
+            return 'error'
+
     def reflect(self):
         """One bounded, recorded idle reflection; never invents events or rewrites identity."""
         if not self.key:
