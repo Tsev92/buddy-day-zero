@@ -843,7 +843,15 @@ class DesktopBuddy(QMainWindow):
         self.setToolTip('Click to talk · Drag to move · Right-click for options')
         self.chat_dialog = None
         self.settings_dialog = None
+        self.character_dialog = None
+        self.ideas_dialog = None
         self.update_thread = None
+        self.reflection_thread = None
+        self._reflection_timer = QTimer(self)
+        self._reflection_timer.setInterval(10*60*1000)
+        self._reflection_timer.timeout.connect(self._maybe_reflect)
+        self._reflection_timer.start()
+        QTimer.singleShot(120000, self._maybe_reflect)
         self.bubbles = BubbleController(self)
         self.wake_listener = WakeListener(self.core.data_dir, lambda: Microphone(self), self)
         self.wake_listener.heard.connect(self.open_conversation)
@@ -875,6 +883,20 @@ class DesktopBuddy(QMainWindow):
                 QTimer.singleShot(900, self._celebrate_updated)
         except OSError:
             pass
+
+    def open_character_sheet(self):
+        if self.character_dialog is None:
+            self.character_dialog = CharacterSheetDialog(self)
+        self.character_dialog.refresh()
+        self.character_dialog.show()
+        self.character_dialog.raise_()
+
+    def open_idea_journal(self):
+        if self.ideas_dialog is None:
+            self.ideas_dialog = IdeaJournalDialog(self)
+        self.ideas_dialog.refresh()
+        self.ideas_dialog.show()
+        self.ideas_dialog.raise_()
 
     def _wake_warning(self, message):
         self.setToolTip('Wake phrase unavailable: ' + message)
@@ -947,6 +969,8 @@ class DesktopBuddy(QMainWindow):
             menu.addAction('⏹ End Conversation Mode', self.end_conversation)
         else:
             menu.addAction('🎙 Start Conversation Mode', self.open_conversation)
+        menu.addAction('💡 Idea Journal', self.open_idea_journal)
+        menu.addAction('🧠 Character Sheet', self.open_character_sheet)
         menu.addAction('⚙ Settings', self.open_settings)
         menu.addAction('↻ Check for updates', self.check_updates)
         menu.addSeparator()
