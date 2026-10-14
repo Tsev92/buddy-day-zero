@@ -107,6 +107,50 @@ class PresentationTests(unittest.TestCase):
         self.assertFalse(face.grab().isNull())
         face.close()
 
+    def test_independent_eye_and_pupil_choices(self):
+        face = Face()
+        face.customize(eyes='round', pupils='slit', mouth='lips')
+        self.assertEqual(face.eye_style, 'round')
+        self.assertEqual(face.pupil_style, 'slit')
+        self.assertEqual(face.mouth_style, 'lips')
+        face.show()
+        for mood in ('thinking','speaking','idle','listening'):
+            face.mood = mood
+            face.audio_level = .8
+            face.animate()
+            self.app.processEvents()
+            self.assertFalse(face.grab().isNull())
+        face.close()
+
+    def test_emotional_journal_persists_on_disk(self):
+        with tempfile.TemporaryDirectory() as folder:
+            memory = Memory(Path(folder))
+            memory.add('user','Hello again')
+            memory.experience('I feel happy about our progress','joy',1)
+            self.assertIn('joy=3/5',memory.emotional_context())
+            memory.db.close()
+            again = Memory(Path(folder))
+            self.assertIn('joy=3/5',again.emotional_context())
+            self.assertEqual(again.count(),1)
+            again.db.close()
+
+    def test_settings_voice_options_and_expression_preview(self):
+        with tempfile.TemporaryDirectory() as folder:
+            memory = Memory(Path(folder))
+            buddy = DesktopBuddy(BuddyCore(Path(folder)),memory,Brain(memory))
+            buddy.open_settings()
+            dlg = buddy.settings_dialog
+            self.assertEqual(dlg.voice_choice.count(),10)
+            self.assertEqual(dlg.face_controls['pupils'].count(),5)
+            dlg.voice_choice.setCurrentIndex(dlg.voice_choice.findData('sage'))
+            dlg.save_voice_settings()
+            self.assertEqual(buddy._settings.value('voice/name'),'sage')
+            dlg.test_expression('thinking')
+            self.assertEqual(dlg.face_preview.mood,'thinking')
+            dlg.close()
+            buddy.wake_listener.stop()
+            buddy.close()
+
     def test_waveform_follows_audio_pauses(self):
         output = io.BytesIO()
         with wave.open(output, 'wb') as sound:
