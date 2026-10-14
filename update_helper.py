@@ -52,6 +52,28 @@ def apply(root, archive):
         raise
     return len(changed)
 
+def install_dependencies(root, python=None):
+    """Install the UPDATED requirements in the SAME environment used by Buddy.
+
+    A code-only update may introduce packages not present in the older install.
+    The updater must prepare those packages before declaring the update complete.
+    """
+    interpreter = python or sys.executable
+    if sys.platform == 'win32':
+        exe = Path(interpreter)
+        # pythonw shares site-packages with python.exe but is unsuitable for
+        # diagnostics; use its console sibling when available.
+        if exe.name.lower() == 'pythonw.exe' and exe.with_name('python.exe').is_file():
+            interpreter = str(exe.with_name('python.exe'))
+    command = [str(interpreter), '-m', 'pip', 'install', '-r', str(root/'requirements.txt')]
+    result = subprocess.run(command,cwd=root,capture_output=True,text=True,
+                            timeout=300,check=False)
+    if result.returncode:
+        detail = (result.stderr or result.stdout or 'No diagnostic output').strip()
+        raise RuntimeError('Python dependency install failed: '+detail[-1200:])
+    return result.stdout
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--root',required=True);parser.add_argument('--archive',required=True)
@@ -75,6 +97,8 @@ def main():
             time.sleep(.2)
         else: raise RuntimeError('Buddy did not exit; update cancelled.')
         count=apply(root,Path(args.archive))
+        # Match the Python runtime that will run Buddy; do not just replace code.
+        install_dependencies(root)
         # The next launch alone may celebrate 100% after installation succeeded.
         version=(root/'VERSION.txt').read_text(encoding='utf8').strip()
         (root/'.buddy_update'/'completed_version.txt').write_text(version,encoding='utf8')
