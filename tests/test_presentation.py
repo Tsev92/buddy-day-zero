@@ -19,6 +19,7 @@ from buddy.brain import Brain
 from buddy.desktop import DesktopBuddy
 from buddy.listening import SilenceDetector
 from buddy.speech_visuals import voice_envelope
+from buddy.audio import normalize_pcm_wav
 
 class PresentationTests(unittest.TestCase):
     @classmethod
@@ -69,6 +70,42 @@ class PresentationTests(unittest.TestCase):
             self.assertFalse(buddy.chat_dialog.conversation_mode)
             buddy.wake_listener.stop()
             buddy.close()
+
+    def test_repair_inflated_wav_duration_and_playback_bytes(self):
+        from io import BytesIO
+        import logging
+        output = BytesIO()
+        with wave.open(output, 'wb') as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16000)
+            audio.writeframes(b'\\x00\\x00' * 32000)
+        original = bytearray(output.getvalue())
+        # Simulate a streaming TTS WAV that claims millions of samples.
+        struct.pack_into('<I', original, 40, 0x7fffffff)
+        with wave.open(BytesIO(original), 'rb') as bad:
+            self.assertGreater(bad.getnframes() / bad.getframerate(), 1000)
+        with self.assertLogs('buddy.audio', level='WARNING') as captured:
+            corrected, milliseconds = normalize_pcm_wav(bytes(original))
+        self.assertEqual(milliseconds, 2000)
+        self.assertTrue(any('repairing header' in line for line in captured.output))
+        with wave.open(BytesIO(corrected), 'rb') as good:
+            self.assertEqual(good.getnframes(), 32000)
+            self.assertEqual(good.getframerate(), 16000)
+            self.assertEqual(len(good.readframes(32000)), 64000)
+        self.assertEqual(normalize_pcm_wav(corrected)[1], 2000)
+
+    def test_signature_eyebrow_is_transient_and_left_only(self):
+        face = Face()
+        face.customize(eyebrows='single')
+        face.mood = 'idle'
+        face.expression = 'neutral'
+        self.assertEqual(face.eyebrow_style, 'single')
+        face.expression = 'skeptical'
+        face.show()
+        self.app.processEvents()
+        self.assertFalse(face.grab().isNull())
+        face.close()
 
     def test_waveform_follows_audio_pauses(self):
         output = io.BytesIO()
