@@ -1042,6 +1042,7 @@ class DesktopBuddy(QMainWindow):
     def disable_camera(self):
         # Hardware-facing kill switch, not only a prompt to Buddy's model.
         self._settings.setValue('camera/enabled',False)
+        self._settings.setValue('camera/cloud',False)
         self._camera_timer.stop()
         self.camera.close()
         self.face.camera_active=False
@@ -1050,6 +1051,7 @@ class DesktopBuddy(QMainWindow):
         self.face.update()
         if self.settings_dialog is not None:
             self.settings_dialog.camera_enabled.setChecked(False)
+            self.settings_dialog.camera_cloud.setChecked(False)
 
     def finish_visual_analysis(self):
         self.face.camera_analyzing=False
