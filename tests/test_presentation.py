@@ -79,7 +79,7 @@ class PresentationTests(unittest.TestCase):
             audio.setnchannels(1)
             audio.setsampwidth(2)
             audio.setframerate(16000)
-            audio.writeframes(b'\\x00\\x00' * 32000)
+            audio.writeframes(b'\x00\x00' * 32000)
         original = bytearray(output.getvalue())
         # Simulate a streaming TTS WAV that claims millions of samples.
         struct.pack_into('<I', original, 40, 0x7fffffff)
