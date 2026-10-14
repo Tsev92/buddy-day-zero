@@ -481,6 +481,65 @@ class PresentationTests(unittest.TestCase):
             buddy.wake_listener.stop()
             buddy.close()
 
+    def test_camera_permissions_and_no_remote_access(self):
+        from buddy.vision import VisionPolicy, relevant_to_camera
+        from buddy.desktop import ReplyTask
+        default=VisionPolicy()
+        self.assertFalse(default.may_track(True))
+        self.assertFalse(default.may_capture(True,True))
+        local=VisionPolicy(True,'always',False,0)
+        self.assertTrue(local.may_track(False))
+        self.assertFalse(local.may_capture(True,True))
+        allowed=VisionPolicy(True,'conversation',True,0)
+        self.assertFalse(allowed.may_track(False))
+        self.assertTrue(allowed.may_track(True))
+        self.assertFalse(allowed.may_capture(False,True))
+        self.assertFalse(allowed.may_capture(True,False))
+        self.assertTrue(allowed.may_capture(True,True))
+        self.assertTrue(relevant_to_camera('How many fingers am I holding up?'))
+        self.assertTrue(relevant_to_camera('Buddy, what do you think of my haircut?'))
+        self.assertFalse(relevant_to_camera("I'm having a bad day."))
+        self.assertFalse(relevant_to_camera("What is the meaning of friendship?"))
+
+    def test_camera_is_disabled_by_default_and_hardware_kill_switch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            buddy=DesktopBuddy(BuddyCore(Path(folder)),memory,Brain(memory))
+            self.assertFalse(buddy.vision_policy().enabled)
+            with patch.object(buddy.camera,'open') as open_device:
+                self.assertIsNone(buddy.capture_for_turn('How many fingers?'))
+                buddy.sync_camera()
+                open_device.assert_not_called()
+            buddy.open_settings()
+            settings=buddy.settings_dialog
+            self.assertFalse(settings.camera_enabled.isChecked())
+            self.assertFalse(settings.camera_cloud.isChecked())
+            settings.camera_enabled.setChecked(True)
+            settings.camera_cloud.setChecked(True)
+            settings.camera_tracking.setCurrentIndex(settings.camera_tracking.findData('off'))
+            settings.save_camera_settings()
+            self.assertTrue(buddy.vision_policy().cloud)
+            buddy.disable_camera()
+            self.assertFalse(buddy.vision_policy().enabled)
+            self.assertFalse(buddy.face.camera_active)
+            self.assertFalse(settings.camera_enabled.isChecked())
+            settings.close()
+            buddy.wake_listener.stop()
+            buddy.close()
+
+    def test_camera_pupil_indicator_and_no_pupil_mode(self):
+        face=Face()
+        face.customize(pupils='none')
+        face.camera_active=True
+        face.camera_analyzing=True
+        face.tracked_face=(.3,-.2)
+        face.animate()
+        face.show()
+        self.app.processEvents()
+        self.assertFalse(face.grab().isNull())
+        self.assertNotEqual(face.gaze_x,0)
+        face.close()
+
     def test_ends_speech_without_click(self):
         d = SilenceDetector()
         base = d.began
