@@ -6,6 +6,8 @@ created in the OS temporary directory and deleted when Buddy exits.
 """
 import json
 import os
+import struct
+import logging
 import tempfile
 import urllib.error
 import urllib.request
@@ -68,6 +70,57 @@ def synthesize_wav(text, voice="alloy"):
     if not audio.startswith(b"RIFF") or b"WAVE" not in audio[:16]:
         raise RuntimeError("Voice service returned invalid audio.")
     return audio
+\n\ndef normalize_pcm_wav(data):
+    """Rebuild a PCM WAV from real sample bytes, not unreliable RIFF sizes.
+
+    Some streamed speech responses declare a placeholder-sized data chunk.
+    Python wave.getnframes() then reports hours for a seconds-long response.
+    Rewriting the header also makes Qt playback and caption timing agree.
+    """
+    if len(data) < 44 or data[:4] != b'RIFF' or data[8:12] != b'WAVE':
+        raise ValueError('Speech service returned invalid WAV audio.')
+    pos = 12
+    fmt = None
+    payload = None
+    declared_size = None
+    while pos + 8 <= len(data):
+        tag = data[pos:pos+4]
+        size = struct.unpack_from('<I', data, pos+4)[0]
+        start = pos + 8
+        if tag == b'fmt ':
+            if size < 16 or start + 16 > len(data):
+                raise ValueError('Invalid WAV format header.')
+            fmt = data[start:start+16]
+        if tag == b'data':
+            payload = data[start:]
+            declared_size = size
+            break
+        if size > len(data) - start:
+            raise ValueError('Malformed WAV chunk.')
+        pos = start + size + (size & 1)
+    if fmt is None or payload is None:
+        raise ValueError('Speech WAV is missing format or samples.')
+    encoding, channels, rate, _, block_align, bits = struct.unpack('<HHIIHH', fmt)
+    if encoding != 1 or channels not in (1, 2) or bits != 16 or rate < 8000:
+        raise ValueError('Unsupported speech audio format.')
+    if block_align != channels * 2:
+        raise ValueError('Unexpected speech sample alignment.')
+    payload = payload[:len(payload) - len(payload) % block_align]
+    if not payload:
+        raise ValueError('Speech WAV contains no audio.')
+    actual_ms = round(1000 * len(payload) / (rate * block_align))
+    header_ms = round(1000 * declared_size / (rate * block_align))
+    if abs(header_ms - actual_ms) > 250:
+        logging.getLogger('buddy.audio').warning(
+            'Speech WAV declared %.2fs but contains %.2fs of PCM; repairing header',
+            header_ms / 1000, actual_ms / 1000)
+    result = BytesIO()
+    with wave.open(result, 'wb') as output:
+        output.setnchannels(channels)
+        output.setsampwidth(2)
+        output.setframerate(rate)
+        output.writeframes(payload)
+    return result.getvalue(), actual_ms
 
 
 class Microphone(QObject):
