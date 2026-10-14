@@ -194,7 +194,7 @@ class Memory:
                     SELECT max(id) FROM messages WHERE id<a.id)
                 LEFT JOIN exchange_learning l ON l.assistant_id=a.id
                 WHERE a.role='assistant' AND u.role='user' AND l.assistant_id IS NULL
-                ORDER BY a.id ASC LIMIT 1
+                ORDER BY a.id DESC LIMIT 1
             """).fetchone()
         return {'id':row[0], 'user':row[1], 'buddy':row[2]} if row else None
 
@@ -207,6 +207,12 @@ class Memory:
                 INSERT OR IGNORE INTO exchange_learning(assistant_id,created,status,summary,evidence,changes)
                 VALUES(?,?,?,?,?,?)
             """,(int(assistant_id),now,status,str(summary)[:400],str(evidence)[:250],str(changes)[:500]))
+
+    def learning_count_today(self, date):
+        with self.lock:
+            return self.db.execute(
+                'SELECT COUNT(*) FROM exchange_learning WHERE substr(created,1,10)=?',(date,)
+            ).fetchone()[0]
 
     def learning_timeline(self, limit=30):
         with self.lock:
