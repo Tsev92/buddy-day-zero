@@ -416,7 +416,7 @@ class CharacterSheetDialog(QDialog):
         layout=QVBoxLayout(self)
         tabs=QTabWidget()
         self.pages={}
-        for label in ('Personality','Emotions','Beliefs','Reflections','History'):
+        for label in ('Personality','Emotions','Beliefs','Reflections','History','Learning'):
             page=QTextBrowser()
             page.setReadOnly(True)
             tabs.addTab(page,label)
@@ -463,6 +463,13 @@ class CharacterSheetDialog(QDialog):
                 safe(x['previous'] or 'No earlier stance'),
                 safe(x['current']),safe(x['reason']))
             for x in sheet['history']) or '<p>No belief changes recorded yet.</p>'))
+        self.pages['Learning'].setHtml('<h3>Conversation learning timeline</h3>'+
+            '<p>Every evaluated exchange is labeled as learned, no meaningful change, or error. '
+            'The quoted evidence comes from the actual dialogue.</p>'+(''.join(
+            '<p><b>%s</b> · %s<br>%s<br><i>Evidence: %s</i><br><small>Changes: %s</small></p>' %
+            (safe(x['status'].replace('_',' ').title()),safe(x['created'][:16]),
+             safe(x['summary']),safe(x['evidence'] or '—'),safe(x['changes'] or '—'))
+            for x in sheet['learning']) or '<p>No exchanges processed yet.</p>'))
 
 
 class IdeaJournalDialog(QDialog):
