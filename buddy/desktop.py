@@ -429,7 +429,7 @@ class CharacterSheetDialog(QDialog):
                 rows.append('<p><b>%s:</b> Not enough evidence yet</p>' % safe(name))
             else:
                 rows.append('<p><b>%s:</b> %d/100</p>' % (safe(name),value))
-        rows.append('<p><i>Derived from observed records, not editable or assigned traits.</i></p>')
+        rows.append('<p><i>Scores are observed expression frequencies across recorded replies (at least five required), not assigned personality traits. These cannot be edited.</i></p>')
         self.pages['Personality'].setHtml('<h3>Developing personality</h3>'+''.join(rows))
         self.pages['Emotions'].setHtml('<h3>Persistent emotional state</h3>'+''.join(
             '<p><b>%s:</b> %s/5 (%s recorded experiences)</p>' % (
@@ -526,8 +526,16 @@ class SettingsDialog(QDialog):
         self.buddy = buddy
         self.setWindowTitle('Buddy Day Zero Settings')
         self.setStyleSheet(STYLE)
-        self.setMinimumWidth(330)
-        layout = QVBoxLayout(self)
+        self.setMinimumWidth(370)
+        self.resize(440,720)
+        outer=QVBoxLayout(self)
+        scroll=QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        controls=QWidget()
+        layout=QVBoxLayout(controls)
+        scroll.setWidget(controls)
+        outer.addWidget(scroll)
         layout.addWidget(QLabel('Buddy name'))
         self.name = QLineEdit(buddy.core.snapshot()['name'])
         layout.addWidget(self.name)
