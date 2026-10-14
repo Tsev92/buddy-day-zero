@@ -12,6 +12,8 @@ class Memory:
         self.lock = threading.RLock()
         with self.lock, self.db:
             self.db.execute('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, created TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN (\'user\',\'assistant\')), content TEXT NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS emotions (name TEXT PRIMARY KEY, intensity INTEGER NOT NULL DEFAULT 2)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS experiences (id INTEGER PRIMARY KEY, created TEXT NOT NULL, event TEXT NOT NULL, emotion TEXT NOT NULL, impact INTEGER NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, created TEXT NOT NULL, detail TEXT NOT NULL, evidence TEXT NOT NULL)')
 
     def add(self, role, content):
@@ -38,3 +40,26 @@ class Memory:
             raise ValueError('Observation requires evidence')
         with self.lock, self.db:
             self.db.execute('INSERT INTO observations(created,detail,evidence) VALUES(?,?,?)', (datetime.now(timezone.utc).isoformat(),detail.strip(),evidence.strip()))
+
+    EMOTIONS = ('joy','curiosity','confidence','affection','frustration','melancholy')
+
+    def emotional_context(self):
+        with self.lock:
+            values = dict(self.db.execute('SELECT name,intensity FROM emotions'))
+            events = self.db.execute(
+                'SELECT event,emotion,impact FROM experiences ORDER BY id DESC LIMIT 6').fetchall()
+        state = ', '.join('%s=%s/5' % (name,values.get(name,2)) for name in self.EMOTIONS)
+        history = '\n'.join('- %s (%s, impact %s)' % (event,emotion,impact)
+                             for event,emotion,impact in events)
+        return 'Current emotional state: ' + state + '\nFormative experiences:\\n' + (history or 'None recorded yet.')
+
+    def experience(self, event, emotion, impact=1):
+        if emotion not in self.EMOTIONS or not isinstance(event,str) or not event.strip():
+            raise ValueError('Experience requires a grounded event and recognized emotion')
+        impact = max(-2,min(2,int(impact)))
+        with self.lock, self.db:
+            self.db.execute('INSERT INTO experiences(created,event,emotion,impact) VALUES(?,?,?,?)',
+                            (datetime.now(timezone.utc).isoformat(),event[:260],emotion,impact))
+            old = self.db.execute('SELECT intensity FROM emotions WHERE name=?',(emotion,)).fetchone()
+            strength = max(0,min(5,(old[0] if old else 2)+impact))
+            self.db.execute('INSERT OR REPLACE INTO emotions(name,intensity) VALUES(?,?)',(emotion,strength))
