@@ -358,6 +358,78 @@ class PresentationTests(unittest.TestCase):
                 api.assert_called_once()
             memory.db.close()
 
+    def test_conversation_learning_saves_grounded_view_and_question(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            memory.add('user','I think our interests develop with time and experience.')
+            memory.add('assistant','I think curiosity matters because it makes me want to explore things.')
+            brain=Brain(memory,key='test-key')
+            exchange=memory.next_unprocessed_exchange()
+            self.assertIsNotNone(exchange)
+            report={'meaningful':True,
+                    'summary':'Buddy and the user discussed developing interests.',
+                    'evidence':'our interests develop with time',
+                    'belief':{'topic':'curiosity','stance':'I think curiosity is useful for discovery.',
+                              'reason':'It motivates me to explore things.',
+                              'quote':'I think curiosity matters','confidence':1},
+                    'idea':{'title':'Recognizing interests',
+                             'detail':'How will I recognize a new lasting personal interest?',
+                             'kind':'curiosity'}}
+            fake=io.BytesIO(json.dumps({'choices':[{'message':{'content':json.dumps(report)}}]}).encode())
+            with patch('buddy.brain.urllib.request.urlopen',return_value=fake) as mock_api:
+                self.assertEqual(brain.process_exchange(),'learned')
+                mock_api.assert_called_once()
+            self.assertEqual(len(memory.beliefs()),1)
+            self.assertEqual(len(memory.ideas()),1)
+            self.assertEqual(memory.learning_timeline()[0]['status'],'learned')
+            self.assertEqual(memory.character_sheet()['learning'][0]['evidence'],'our interests develop with time')
+            self.assertIsNone(memory.next_unprocessed_exchange())
+            memory.db.close()
+            loaded=Memory(Path(folder))
+            self.assertEqual(loaded.learning_timeline()[0]['status'],'learned')
+            self.assertEqual(len(loaded.beliefs()),1)
+            loaded.db.close()
+
+    def test_learning_no_change_and_fake_evidence_not_promoted(self):
+        import json
+        for report in (
+            {'meaningful':False,'summary':'','evidence':'','belief':None,'idea':None},
+            {'meaningful':True,'summary':'Buddy remembered flying','evidence':'I flew across the ocean',
+             'belief':None,'idea':None}
+        ):
+            with tempfile.TemporaryDirectory() as folder:
+                memory=Memory(Path(folder))
+                memory.add('user','Hello there!')
+                memory.add('assistant','Hello.')
+                brain=Brain(memory,key='test-key')
+                fake=io.BytesIO(json.dumps({'choices':[{'message':{'content':json.dumps(report)}}]}).encode())
+                with patch('buddy.brain.urllib.request.urlopen',return_value=fake):
+                    self.assertEqual(brain.process_exchange(),'no_change')
+                self.assertEqual(memory.beliefs(),[])
+                self.assertEqual(memory.ideas(),[])
+                self.assertEqual(memory.learning_timeline()[0]['status'],'no_change')
+                memory.db.close()
+
+    def test_learning_does_not_promote_user_opinion_without_buddy_evidence(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            memory.add('user','I believe all conversation is nurture for you.')
+            memory.add('assistant','I wonder how that will shape my own interests.')
+            brain=Brain(memory,key='test-key')
+            report={'meaningful':True,'summary':'The pair discussed learning and nurture.',
+                    'evidence':'conversation is nurture for you',
+                    'belief':{'topic':'nurture','stance':'I believe conversations are all my nurture.',
+                              'reason':'The user told me this.',
+                              'quote':'I believe all conversation is nurture for you','confidence':5},
+                    'idea':None}
+            fake=io.BytesIO(json.dumps({'choices':[{'message':{'content':json.dumps(report)}}]}).encode())
+            with patch('buddy.brain.urllib.request.urlopen',return_value=fake):
+                self.assertEqual(brain.process_exchange(),'learned')
+            self.assertEqual(memory.beliefs(),[])
+            memory.db.close()
+
     def test_reflection_rejects_unverifiable_evidence(self):
         import json
         with tempfile.TemporaryDirectory() as folder:
