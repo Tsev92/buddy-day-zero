@@ -138,6 +138,44 @@ class PresentationTests(unittest.TestCase):
             buddy.wake_listener.stop()
             buddy.close()
 
+    def test_bubble_real_text_widget_renders_more_than_first_word(self):
+        from PySide6.QtWidgets import QTextEdit
+        with tempfile.TemporaryDirectory() as folder:
+            memory = Memory(Path(folder))
+            buddy = DesktopBuddy(BuddyCore(Path(folder)), memory, Brain(memory))
+            buddy.show()
+            bubble = buddy.bubbles
+            message = 'I definitely say many more words after the first word.'
+            bubble.begin(message, 1600)
+            self.assertIsInstance(bubble.bubble.text_view, QTextEdit)
+            QTest.qWait(700)
+            self.app.processEvents()
+            self.assertGreater(len(bubble.bubble.text_view.toPlainText().split()), 1)
+            self.assertFalse(bubble.bubble.text_view.grab().isNull())
+            bubble.speaking_finished()
+            self.assertEqual(bubble.bubble.text_view.toPlainText(), message)
+            bubble.stop()
+            buddy.wake_listener.stop()
+            buddy.close()
+
+    def test_customization_and_action_faces(self):
+        face = Face()
+        face.resize(360,203)
+        face.customize(eyes='pupils', mouth='lips', color='#ffc1de', eyebrows='single')
+        self.assertEqual(face.mouth_style, 'lips')
+        self.assertEqual(face.eyebrow_style, 'single')
+        face.show()
+        for mood in ('idle','listening','thinking','speaking','error'):
+            face.mood = mood
+            face.mic_level = .8
+            face.animate()
+            self.app.processEvents()
+            self.assertFalse(face.grab().isNull(), mood)
+        face.customize(eyes='pixel', mouth='cat', eyebrows='both')
+        self.app.processEvents()
+        self.assertFalse(face.grab().isNull())
+        face.close()
+
     def test_spinner_and_listening_brackets_render(self):
         face = Face()
         face.resize(360,203)
