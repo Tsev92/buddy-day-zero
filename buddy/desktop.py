@@ -46,12 +46,13 @@ class UpdateTask(QObject):
 class VoiceTask(QObject):
     finished = Signal(object)
     failed = Signal(str)
-    def __init__(self, action, value):
+    def __init__(self, action, value, voice='alloy', model='tts-1', speed=1.0):
         super().__init__()
         self.action, self.value = action, value
+        self.voice, self.model, self.speed = voice, model, speed
     def run(self):
         try:
-            result = transcribe_wav(self.value) if self.action == 'transcribe' else synthesize_wav(self.value)
+            result = transcribe_wav(self.value) if self.action == 'transcribe' else synthesize_wav(self.value, self.voice, self.model, self.speed)
             self.finished.emit(result)
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -216,7 +217,10 @@ class ChatDialog(QDialog):
         if self.voice_thread is not None: return
         self.voice_action = action
         self.voice_thread = QThread(self)
-        self.voice_worker = VoiceTask(action, value)
+        self.voice_worker = VoiceTask(action, value,
+            self.buddy._settings.value('voice/name','alloy'),
+            self.buddy._settings.value('voice/model','tts-1'),
+            float(self.buddy._settings.value('voice/speed',1.0)))
         self.voice_worker.moveToThread(self.voice_thread)
         self.voice_thread.started.connect(self.voice_worker.run)
         self.voice_worker.finished.connect(self.voice_succeeded)
@@ -367,18 +371,47 @@ class SettingsDialog(QDialog):
         self.wake_status.setWordWrap(True)
         layout.addWidget(self.wake_status)
         self._wake_setup_thread = None
+        layout.addWidget(QLabel('Voice & Speech'))
+        self.voice_choice = QComboBox()
+        for v in ('alloy','ash','ballad','coral','echo','fable','nova','onyx','sage','shimmer'):
+            self.voice_choice.addItem(v.title(),v)
+        self.voice_choice.setCurrentIndex(max(0,self.voice_choice.findData(
+            buddy._settings.value('voice/name','alloy'))))
+        layout.addWidget(self.voice_choice)
+        self.model_choice = QComboBox()
+        for model in ('tts-1','tts-1-hd','gpt-4o-mini-tts'):
+            self.model_choice.addItem(model,model)
+        self.model_choice.setCurrentIndex(max(0,self.model_choice.findData(
+            buddy._settings.value('voice/model','tts-1'))))
+        layout.addWidget(self.model_choice)
+        layout.addWidget(QLabel('Speaking speed'))
+        self.speed_choice = QComboBox()
+        for speed in (.75,1.0,1.15,1.3,1.5):
+            self.speed_choice.addItem(str(speed)+'×',speed)
+        self.speed_choice.setCurrentIndex(max(0,self.speed_choice.findData(
+            float(buddy._settings.value('voice/speed',1.0)))))
+        layout.addWidget(self.speed_choice)
+        save_voice = QPushButton('Save Voice & Speech')
+        save_voice.clicked.connect(self.save_voice_settings)
+        layout.addWidget(save_voice)
+        preview_voice = QPushButton('Preview selected voice')
+        preview_voice.clicked.connect(self.preview_voice)
+        layout.addWidget(preview_voice)
+        self.preview_speaker = Speaker(self)
+        self.preview_thread = None
         layout.addWidget(QLabel('Customize Buddy'))
         self.face_preview = Face()
         self.face_preview.setFixedSize(260, 147)
         layout.addWidget(self.face_preview)
         self.face_controls = {}
         options = (
-            ('eyes','Eyes', ('classic','pupils','round','sleepy','pixel')),
+            ('eyes','Eye shape', ('classic','round','sleepy','pixel')),
+            ('pupils','Pupil shape', ('none','oval','round','slit','pixel')),
             ('mouth','Mouth', ('classic','smile','wry','cat','pixel','lips')),
             ('eyebrows','Eyebrows', ('single','both','none')),
             ('color','Face color', ('#a8ecff','#bda7ff','#9becba','#ffc58f','#ffc1de'))
         )
-        current = {'eyes':buddy.face.eye_style,'mouth':buddy.face.mouth_style,
+        current = {'eyes':buddy.face.eye_style,'pupils':buddy.face.pupil_style,'mouth':buddy.face.mouth_style,
                    'eyebrows':buddy.face.eyebrow_style,'color':buddy.face.eye_color}
         for key, title, choices in options:
             layout.addWidget(QLabel(title))
@@ -393,6 +426,12 @@ class SettingsDialog(QDialog):
             self.face_controls[key] = combo
             layout.addWidget(combo)
         self.preview_customization()
+        test_row = QHBoxLayout()
+        for mood in ('idle','thinking','speaking','listening'):
+            button = QPushButton(mood.title())
+            button.clicked.connect(lambda _checked=False, m=mood: self.test_expression(m))
+            test_row.addWidget(button)
+        layout.addLayout(test_row)
         apply_button = QPushButton('Apply Buddy appearance')
         apply_button.clicked.connect(self.apply_customization)
         layout.addWidget(apply_button)
@@ -415,11 +454,51 @@ class SettingsDialog(QDialog):
             self.buddy._settings.setValue('appearance/'+key,value)
 
     def reset_customization(self):
-        defaults = {'eyes':'pupils','mouth':'classic',
+        defaults = {'eyes':'classic','pupils':'oval','mouth':'classic',
                     'eyebrows':'single','color':'#a8ecff'}
         for key,widget in self.face_controls.items():
             widget.setCurrentIndex(widget.findData(defaults[key]))
         self.apply_customization()
+
+    def save_voice_settings(self):
+        settings = self.buddy._settings
+        settings.setValue('voice/name',self.voice_choice.currentData())
+        settings.setValue('voice/model',self.model_choice.currentData())
+        settings.setValue('voice/speed',self.speed_choice.currentData())
+
+    def preview_voice(self):
+        if self.preview_thread is not None:
+            return
+        self.preview_thread = QThread(self)
+        self.preview_worker = VoiceTask('speak',
+            'Hello there. This is how my voice sounds.',
+            self.voice_choice.currentData(),self.model_choice.currentData(),
+            self.speed_choice.currentData())
+        self.preview_worker.moveToThread(self.preview_thread)
+        self.preview_thread.started.connect(self.preview_worker.run)
+        self.preview_worker.finished.connect(self._play_preview)
+        self.preview_worker.failed.connect(self._preview_error)
+        self.preview_worker.finished.connect(self.preview_thread.quit)
+        self.preview_worker.failed.connect(self.preview_thread.quit)
+        self.preview_thread.finished.connect(self._preview_cleanup)
+        self.preview_thread.start()
+
+    def _play_preview(self, wav):
+        self.preview_speaker.play_wav(normalize_pcm_wav(wav)[0])
+
+    def _preview_error(self, message):
+        QMessageBox.warning(self,'Voice preview failed',message)
+
+    def _preview_cleanup(self):
+        self.preview_worker.deleteLater()
+        self.preview_thread.deleteLater()
+        self.preview_worker = self.preview_thread = None
+
+    def test_expression(self, mood):
+        self.face_preview.mood = mood
+        self.face_preview.express('skeptical' if mood == 'thinking' else 'neutral', 2)
+        self.face_preview.audio_level = .75 if mood == 'speaking' else 0
+        self.face_preview.update()
 
     def toggle_wake(self, enabled):
         if not enabled:
@@ -510,7 +589,8 @@ class DesktopBuddy(QMainWindow):
         self._did_drag = False
         self._settings = QSettings('BuddyDayZero', 'Desktop')
         self.face.customize(
-            eyes=self._settings.value('appearance/eyes','pupils'),
+            eyes=self._settings.value('appearance/eyes','classic'),
+            pupils=self._settings.value('appearance/pupils','oval'),
             mouth=self._settings.value('appearance/mouth','classic'),
             eyebrows=self._settings.value('appearance/eyebrows','single'),
             color=self._settings.value('appearance/color','#a8ecff'))
