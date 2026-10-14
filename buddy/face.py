@@ -192,11 +192,11 @@ class Face(QWidget):
             glow.setAlpha(int(150 + 90 * (0.5 + 0.5 * math.sin(t * 5))))
             p.setPen(QPen(glow, 4.2, Qt.SolidLine, Qt.RoundCap))
             p.setBrush(Qt.NoBrush)
-            for cx, sign in ((55, -1), (265, 1)):
+            for cx, sign in ((34, -1), (286, 1)):
                 bracket = QPainterPath()
-                bracket.moveTo(cx - sign * 2, 49)
-                bracket.cubicTo(cx + sign * 16, 65, cx + sign * 16, 100,
-                                cx - sign * 2, 119)
+                bracket.moveTo(cx - sign * 2, 42)
+                bracket.cubicTo(cx + sign * 12, 61, cx + sign * 12, 103,
+                                cx - sign * 2, 125)
                 p.drawPath(bracket)
         p.save()
         p.translate(160,93 + self._nod)
@@ -252,26 +252,27 @@ class Face(QWidget):
             elif e == "thoughtful" and self.blink_amount > .5:
                 p.setBrush(QColor(34,41,67,130))
                 p.drawRoundedRect(QRectF(cx-14,cy+7,28,9),4,4)
-        # Eyebrows and lids are expressed with small shape changes.
+        # OG signature brow: a temporary acting cue, not permanent anatomy.
+        # Left on SCREEN (eye center 105); dramatic emotions use both brows.
         p.setBrush(Qt.NoBrush)
-        if self.eyebrow_style != 'none' or e in ('worried','surprised'):
+        expressive = e in ('curious','skeptical','mischievous','thoughtful',
+                           'surprised','worried','determined','inspired')
+        thinking_cue = self.mood == 'thinking'
+        # A brief arch during neutral idle looks like a spontaneous quirk.
+        idle_cue = (self.mood == 'idle' and e == 'neutral'
+                    and self.tick % 230 < 27)
+        if self.eyebrow_style != 'none' and (expressive or thinking_cue or idle_cue):
+            both = (self.eyebrow_style == 'both'
+                    or e in ('surprised','worried','determined'))
+            centers = (105,215) if both else (105,)
             p.setPen(QPen(eye,3.6,Qt.SolidLine,Qt.RoundCap))
-            centers = (105,215) if self.eyebrow_style == 'both' or e in ('worried','surprised','determined') else (215,)
             for bx in centers:
-                high = -7 if e in ('curious','skeptical','surprised') else 0
-                p.drawLine(QPointF(bx-16,33+high),QPointF(bx+16,35+high))
-        if False and e in ("worried","determined","skeptical","mischievous"):
-            p.setPen(QPen(eye,3.6,Qt.SolidLine,Qt.RoundCap))
-            for i,cx in enumerate((105,215)):
-                if e == "worried":
-                    a,b = ((cx-16,35),(cx+15,42)) if i == 0 else ((cx-15,42),(cx+16,35))
-                elif e == "determined":
-                    a,b = ((cx-16,37),(cx+16,45)) if i == 0 else ((cx-16,45),(cx+16,37))
-                elif e == "skeptical":
-                    a,b = ((cx-16,35),(cx+16,33)) if i == 0 else ((cx-16,39),(cx+16,34))
-                else:
-                    a,b = ((cx-16,40),(cx+16,34)) if i == 0 else ((cx-16,34),(cx+16,40))
-                p.drawLine(QPointF(*a),QPointF(*b))
+                arch = 7 if e in ('skeptical','curious','surprised') else 3
+                wiggle = 2 * math.sin(self.tick*.14)
+                brow = QPainterPath()
+                brow.moveTo(bx-18,39)
+                brow.quadTo(bx,23-arch+wiggle,bx+18,36)
+                p.drawPath(brow)
         # Mouth family matches the same rounded, softly illuminated eye language.
         mouth_color = QColor(self.eye_color)
         p.setPen(QPen(mouth_color,4.5,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
