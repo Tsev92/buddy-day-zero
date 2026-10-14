@@ -31,8 +31,9 @@ VISUAL_REFERENCES = re.compile(
     r"(?i)\b(?:look at (?:this|that|me|my|the|what)|look what|"
     r"(?:can|could|do) you (?:see|look at|read)|see (?:this|that|my|what)|"
     r"watch (?:this|me|what)|(?:i'm|i am) (?:showing|holding)|"
-    r"holding up|how many fingers|"
+    r"holding up|how many fingers|what am i holding|"
     r"what(?:'s| is) (?:this|that|in my hand|on my desk|behind me)|"
+    r"what (?:do i have|have i got) (?:in my hand|here)|"
     r"what color (?:is |are )?(?:my|this|that)|what am i wearing|"
     r"my (?:shirt|haircut|outfit)|can you read|what does this say|"
     r"do you like (?:my|this)|how do i look)\b"
@@ -40,10 +41,11 @@ VISUAL_REFERENCES = re.compile(
 
 
 def relevant_to_camera(text):
-    """Conservative gate. The model can decline to look, but cannot open
-    a camera from arbitrary instructions when this permission gate is false.
-    """
-    return bool(VISUAL_REFERENCES.search(str(text or '')))
+    """Conservative local gate; normalize contractions without changing permissions."""
+    normalized = str(text or '').casefold().replace('\u2019', "'")
+    # ASR often drops apostrophes entirely; normalize common visual contractions.
+    normalized = re.sub(r"\bwhats\b", "what's", normalized)
+    return bool(VISUAL_REFERENCES.search(normalized))
 
 
 def cloud_observation(jpeg, api_key, question, model='gpt-4.1-mini'):
