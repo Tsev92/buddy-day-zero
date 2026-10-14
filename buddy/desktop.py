@@ -939,6 +939,18 @@ class DesktopBuddy(QMainWindow):
                 self.character_dialog.refresh()
             if self.ideas_dialog is not None and self.ideas_dialog.isVisible():
                 self.ideas_dialog.refresh()
+            # Only occasionally share a *recorded* idea, without demanding a reply.
+            from datetime import datetime,timezone
+            today=datetime.now(timezone.utc).date().isoformat()
+            if (self.memory.count() >= 12 and
+                self._settings.value('mind/last_overture','') != today and
+                (self.chat_dialog is None or not self.chat_dialog.isVisible())):
+                notes=self.memory.reflections(1)
+                if notes:
+                    self._settings.setValue('mind/last_overture',today)
+                    thought=notes[0]['content'][:170]
+                    self.bubbles.begin(thought,9000)
+                    QTimer.singleShot(9500,self.bubbles.speaking_finished)
 
     def _reflection_failed(self, error):
         self.setToolTip('Reflection unavailable: '+str(error)[:120])
