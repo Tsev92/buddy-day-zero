@@ -70,6 +70,32 @@ def cloud_observation(jpeg, api_key, question, model='gpt-4.1-mini'):
     return reply['choices'][0]['message']['content'].strip()[:600]
 
 
+def camera_devices():
+    """Enumerate named capture devices, aligned with OpenCV DirectShow on Windows.
+
+    DirectShow supplies both the name and index in one enumeration. Qt is a
+    last-resort names fallback; camera tests are authoritative for index mapping.
+    No camera is opened by listing devices.
+    """
+    import sys
+    if sys.platform == 'win32':
+        try:
+            from pygrabber.dshow_graph import FilterGraph
+            names=FilterGraph().get_input_devices()
+            if names:
+                return [(i, str(name)) for i,name in enumerate(names)]
+        except (ImportError, OSError, RuntimeError, ValueError):
+            pass
+    try:
+        from PySide6.QtMultimedia import QMediaDevices
+        devices=QMediaDevices.videoInputs()
+        if devices:
+            return [(i, str(dev.description())) for i,dev in enumerate(devices)]
+    except (ImportError, RuntimeError):
+        pass
+    return []
+
+
 class LocalCamera:
     """Single local webcam owner. Never saves frames or starts a server."""
     def __init__(self, factory=None):
@@ -90,11 +116,24 @@ class LocalCamera:
             import cv2
         except ImportError as exc:
             raise RuntimeError('Local camera requires opencv-python-headless.') from exc
-        cam=self.factory(int(index)) if self.factory else cv2.VideoCapture(
-            int(index), cv2.CAP_DSHOW if __import__('sys').platform=='win32' else cv2.CAP_ANY)
-        if not cam or not cam.isOpened():
-            if cam: cam.release()
-            raise RuntimeError('Camera unavailable or permission denied.')
+        import sys
+        if self.factory:
+            cam=self.factory(int(index))
+        else:
+            backends=(cv2.CAP_DSHOW,cv2.CAP_MSMF) if sys.platform=='win32' else (cv2.CAP_ANY,)
+            cam=None
+            for backend in backends:
+                candidate=cv2.VideoCapture(int(index),backend)
+                if candidate is not None and candidate.isOpened():
+                    cam=candidate
+                    break
+                if candidate is not None:
+                    candidate.release()
+        if cam is None or not cam.isOpened():
+            if cam is not None: cam.release()
+            raise RuntimeError(
+                'Could not open camera '+str(index)+'. Try Test Camera with another device, '
+                'or close another app using the webcam.')
         cam.set(cv2.CAP_PROP_FRAME_WIDTH,640)
         cam.set(cv2.CAP_PROP_FRAME_HEIGHT,480)
         self.cv2=cv2
