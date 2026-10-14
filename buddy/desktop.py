@@ -364,8 +364,18 @@ class ChatDialog(QDialog):
         self.status.setText('Buddy is thinking…')
         self.buddy.pause_wake()
         self.buddy.face.mood = 'thinking'
+        try:
+            jpeg = self.buddy.capture_for_turn(message)
+        except Exception as exc:
+            # A failed visual request must never silently turn into a text-only answer.
+            self.status.setText('Visual capture failed: '+str(exc))
+            self.append('assistant', '[I tried to look, but the camera capture failed: '+str(exc)+']')
+            self.input.setEnabled(True)
+            self.send_button.setEnabled(True)
+            self.buddy.face.mood='idle'
+            self.buddy.finish_visual_analysis()
+            return
         self.worker_thread = QThread(self)
-        jpeg = self.buddy.capture_for_turn(message)
         self.worker = ReplyTask(self.buddy.brain, message, jpeg)
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
@@ -1195,7 +1205,7 @@ class DesktopBuddy(QMainWindow):
             self.face.camera_analyzing=False
             self.sync_camera()
             self.setToolTip('Vision capture unavailable: '+str(exc))
-            return None
+            raise RuntimeError(str(exc)) from exc
         finally:
             self.face.update()
 
