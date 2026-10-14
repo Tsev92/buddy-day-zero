@@ -28,9 +28,12 @@ class VisionPolicy:
 # Only refers to what's visible RIGHT NOW; mentions of emotions, memories or
 # ordinary conversation are never treated as permission to watch.
 VISUAL_REFERENCES = re.compile(
-    r"(?i)(?:\b(?:look(?:\s+at)?|see|show(?:ing)?|watch|holding up|"
+    r"(?i)\b(?:look at (?:this|that|me|my|the|what)|look what|"
+    r"(?:can|could|do) you (?:see|look at|read)|see (?:this|that|my|what)|"
+    r"watch (?:this|me|what)|(?:i'm|i am) (?:showing|holding)|"
+    r"holding up|how many fingers|"
     r"what(?:'s| is) (?:this|that|in my hand|on my desk|behind me)|"
-    r"how many fingers|what color(?:\s+is)?|what am i wearing|"
+    r"what color (?:is |are )?(?:my|this|that)|what am i wearing|"
     r"my (?:shirt|haircut|outfit)|can you read|what does this say|"
     r"do you like (?:my|this)|how do i look)\b)"
 )
