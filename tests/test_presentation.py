@@ -499,6 +499,49 @@ class PresentationTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,'Network unavailable'):
                     install_dependencies(root,python='python')
 
+    def test_named_camera_picker_and_live_preview_failure_message(self):
+        from buddy.desktop import CameraTestDialog
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            buddy=DesktopBuddy(BuddyCore(Path(folder)),memory,Brain(memory))
+            with patch('buddy.desktop.camera_devices',return_value=[
+                (0,'Integrated Webcam'),(1,'USB Streaming Camera')]):
+                buddy.open_settings()
+                settings=buddy.settings_dialog
+                settings.refresh_cameras()
+                self.assertIn('USB Streaming Camera',settings.camera_index.itemText(1))
+                settings.camera_index.setCurrentIndex(1)
+                with patch.object(CameraTestDialog,'start') as start:
+                    settings.test_camera()
+                    start.assert_called_once()
+                    self.assertEqual(settings._camera_preview.index,1)
+                    self.assertIn('USB Streaming Camera',settings._camera_preview.windowTitle())
+                settings._camera_preview.close()
+            settings.close()
+            buddy.wake_listener.stop()
+            buddy.close()
+
+    def test_camera_name_discovery_fallback_and_preview_failure(self):
+        from buddy.desktop import CameraTestDialog
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            buddy=DesktopBuddy(BuddyCore(Path(folder)),memory,Brain(memory))
+            with patch('buddy.desktop.camera_devices',return_value=[]):
+                buddy.open_settings()
+                dlg=buddy.settings_dialog
+                dlg.refresh_cameras()
+                self.assertIn('name unavailable',dlg.camera_index.itemText(0))
+                dlg._camera_preview=CameraTestDialog(buddy,0,'Camera 0')
+                with patch.object(dlg._camera_preview.camera,'open',
+                                  side_effect=RuntimeError('Device busy')):
+                    dlg._camera_preview.start()
+                    self.assertIn('Device busy',dlg._camera_preview.status.text())
+                    self.assertFalse(buddy.face.camera_active)
+                dlg._camera_preview.close()
+                dlg.close()
+            buddy.wake_listener.stop()
+            buddy.close()
+
     def test_camera_permissions_and_no_remote_access(self):
         from buddy.vision import VisionPolicy, relevant_to_camera
         from buddy.desktop import ReplyTask
