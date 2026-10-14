@@ -70,7 +70,9 @@ def synthesize_wav(text, voice="alloy"):
     if not audio.startswith(b"RIFF") or b"WAVE" not in audio[:16]:
         raise RuntimeError("Voice service returned invalid audio.")
     return audio
-\n\ndef normalize_pcm_wav(data):
+
+
+def normalize_pcm_wav(data):
     """Rebuild a PCM WAV from real sample bytes, not unreliable RIFF sizes.
 
     Some streamed speech responses declare a placeholder-sized data chunk.
