@@ -277,6 +277,52 @@ class PresentationTests(unittest.TestCase):
         self.assertNotEqual(first,second)
         face.close()
 
+    def test_mind_journals_persist_and_are_read_only(self):
+        from buddy.desktop import CharacterSheetDialog, IdeaJournalDialog
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            memory.add('user','Hello. I wonder how people learn good manners.')
+            memory.add('assistant','I think learning manners might take practice.')
+            self.assertTrue(memory.reflection_due())
+            self.assertTrue(memory.add_reflection('I want to understand social expectations.',
+                                                   'people learn good manners'))
+            self.assertTrue(memory.add_idea('How manners work',
+                'Why do expectations about manners vary between people?','curiosity','reflection'))
+            self.assertTrue(memory.consider_belief('manners',
+                'I think kindness matters when expressing disagreement.',
+                'We discussed social expectations in conversation.',1))
+            self.assertFalse(memory.character_sheet()['traits']['Independence'])
+            self.assertEqual(len(memory.ideas()),1)
+            dlg=CharacterSheetDialog(type('BuddyRef',(),{'memory':memory})())
+            self.assertIn('How manners',str(memory.ideas()[0]['title']))
+            dlg.close()
+            memory.mark_reflection_attempt()
+            self.assertFalse(memory.reflection_due())
+            memory.db.close()
+            reloaded=Memory(Path(folder))
+            self.assertEqual(len(reloaded.beliefs()),1)
+            self.assertEqual(len(reloaded.reflections()),1)
+            self.assertEqual(reloaded.reflection_calls_today(reloaded.reflections()[0]['created'][:10]),1)
+            reloaded.db.close()
+
+    def test_microphone_settings_and_reflection_budget(self):
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            buddy=DesktopBuddy(BuddyCore(Path(folder)),memory,Brain(memory))
+            buddy.open_settings()
+            dlg=buddy.settings_dialog
+            self.assertEqual(dlg.pause_choice.count(),4)
+            self.assertEqual(dlg.sensitivity_choice.count(),3)
+            dlg.pause_choice.setCurrentIndex(dlg.pause_choice.findData(4.0))
+            dlg.save_microphone_settings()
+            self.assertEqual(float(buddy._settings.value('mic/pause')),4.0)
+            dlg.daily_reflections.setCurrentIndex(dlg.daily_reflections.findData(2))
+            dlg.save_mind_settings()
+            self.assertEqual(int(buddy._settings.value('mind/daily_limit')),2)
+            dlg.close()
+            buddy.wake_listener.stop()
+            buddy.close()
+
     def test_ends_speech_without_click(self):
         d = SilenceDetector()
         base = d.began
@@ -284,7 +330,8 @@ class PresentationTests(unittest.TestCase):
         speech = array.array('h', [6000] * 5000).tobytes()
         self.assertEqual(d.inspect(speech, base + 0.3), 'keep')
         self.assertEqual(d.inspect(speech, base + 0.5), 'keep')
-        self.assertEqual(d.inspect(b'', base + 2.2), 'send')
+        self.assertEqual(d.inspect(b'', base + 2.2), 'keep')
+        self.assertEqual(d.inspect(b'', base + 3.1), 'send')
 
 if __name__ == '__main__':
     unittest.main()
