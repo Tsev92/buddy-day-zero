@@ -481,6 +481,24 @@ class PresentationTests(unittest.TestCase):
             buddy.wake_listener.stop()
             buddy.close()
 
+    def test_updater_installs_new_dependencies_before_completion(self):
+        from update_helper import install_dependencies
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            (root/'requirements.txt').write_text('opencv-python-headless>=4.9,<5\\n')
+            with patch('update_helper.subprocess.run') as run:
+                run.return_value.returncode=0
+                run.return_value.stdout='Requirement already satisfied'
+                self.assertIn('satisfied',install_dependencies(root,python='python'))
+                command=run.call_args.args[0]
+                self.assertEqual(command[:4],['python','-m','pip','install'])
+                self.assertEqual(command[-2:],['-r',str(root/'requirements.txt')])
+            with patch('update_helper.subprocess.run') as run:
+                run.return_value.returncode=1
+                run.return_value.stderr='Network unavailable'
+                with self.assertRaisesRegex(RuntimeError,'Network unavailable'):
+                    install_dependencies(root,python='python')
+
     def test_camera_permissions_and_no_remote_access(self):
         from buddy.vision import VisionPolicy, relevant_to_camera
         from buddy.desktop import ReplyTask
