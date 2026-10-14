@@ -1,9 +1,10 @@
 """Standalone desktop shell around the original Buddy face and Day Zero brain."""
 from PySide6.QtCore import QObject, Qt, QThread, Signal, QEvent, QSettings, QTimer
 from PySide6.QtGui import QFont, QAction, QKeySequence, QShortcut
+from PySide6.QtMultimedia import QMediaDevices
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QMenu,
-    QTextBrowser, QVBoxLayout, QWidget, QMessageBox, QCheckBox, QComboBox)
+    QTextBrowser, QVBoxLayout, QWidget, QMessageBox, QCheckBox, QComboBox, QProgressBar, QTabWidget)
 from .face import Face
 from .version import VERSION
 from .audio import Microphone, Speaker, transcribe_wav, synthesize_wav, normalize_pcm_wav
@@ -42,6 +43,20 @@ class UpdateTask(QObject):
             if self.action == 'check': self.finished.emit(check_release())
             else: self.finished.emit(download_verified(self.release,self.folder,self.progress.emit))
         except Exception as exc: self.failed.emit(str(exc))
+
+class ReflectTask(QObject):
+    finished = Signal(bool)
+    failed = Signal(str)
+    def __init__(self, brain, memory):
+        super().__init__()
+        self.brain, self.memory = brain, memory
+    def run(self):
+        try:
+            self.memory.mark_reflection_attempt()
+            self.finished.emit(self.brain.reflect())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
 
 class VoiceTask(QObject):
     finished = Signal(object)
@@ -346,6 +361,136 @@ class ChatDialog(QDialog):
         self.speaker.stop()
         QTimer.singleShot(1000, self.buddy._maybe_start_wake)
         super().closeEvent(event)
+
+
+class CharacterSheetDialog(QDialog):
+    """Display observed character development; no stat or belief editing controls."""
+    def __init__(self, buddy):
+        super().__init__(buddy)
+        self.buddy = buddy
+        self.setWindowTitle('Buddy · Character Sheet')
+        self.resize(615,520)
+        self.setStyleSheet(STYLE)
+        layout=QVBoxLayout(self)
+        tabs=QTabWidget()
+        self.pages={}
+        for label in ('Personality','Emotions','Beliefs','Reflections','History'):
+            page=QTextBrowser()
+            page.setReadOnly(True)
+            tabs.addTab(page,label)
+            self.pages[label]=page
+        layout.addWidget(tabs)
+        row=QHBoxLayout()
+        refresh=QPushButton('Refresh')
+        refresh.clicked.connect(self.refresh)
+        row.addWidget(refresh)
+        close=QPushButton('Close')
+        close.clicked.connect(self.close)
+        row.addWidget(close)
+        layout.addLayout(row)
+        self.refresh()
+
+    def refresh(self):
+        from html import escape
+        safe=lambda value: escape(str(value))
+        sheet=self.buddy.memory.character_sheet()
+        traits=sheet['traits']
+        rows=[]
+        for name,value in traits.items():
+            if value is None:
+                rows.append('<p><b>%s:</b> Not enough evidence yet</p>' % safe(name))
+            else:
+                rows.append('<p><b>%s:</b> %d/100</p>' % (safe(name),value))
+        rows.append('<p><i>Derived from observed records, not editable or assigned traits.</i></p>')
+        self.pages['Personality'].setHtml('<h3>Developing personality</h3>'+''.join(rows))
+        self.pages['Emotions'].setHtml('<h3>Persistent emotional state</h3>'+''.join(
+            '<p><b>%s:</b> %s/5 (%s recorded experiences)</p>' % (
+                safe(name.title()),strength,sheet['evidence'].get(name,0))
+            for name,strength in sheet['emotions'].items()))
+        self.pages['Beliefs'].setHtml('<h3>Tentative beliefs</h3>'+(''.join(
+            '<p><b>%s</b> · %s/5<br>%s<br><i>%s</i></p>' % (
+                safe(x['topic']),x['confidence'],safe(x['stance']),safe(x['reason']))
+            for x in sheet['beliefs']) or '<p>No beliefs recorded yet.</p>'))
+        self.pages['Reflections'].setHtml('<h3>Recorded independent reflections</h3>'+(''.join(
+            '<p><b>%s</b><br>%s<br><small>Grounded in: %s</small></p>' % (
+                safe(x['created'][:16]),safe(x['content']),safe(x['evidence']))
+            for x in sheet['reflections']) or '<p>Buddy has not recorded any reflections yet.</p>'))
+        self.pages['History'].setHtml('<h3>Changing his mind</h3>'+(''.join(
+            '<p><b>%s</b> · %s<br>%s → %s<br><small>%s</small></p>' % (
+                safe(x['topic']),safe(x['created'][:16]),
+                safe(x['previous'] or 'No earlier stance'),
+                safe(x['current']),safe(x['reason']))
+            for x in sheet['history']) or '<p>No belief changes recorded yet.</p>'))
+
+
+class IdeaJournalDialog(QDialog):
+    def __init__(self, buddy):
+        super().__init__(buddy)
+        self.buddy=buddy
+        self.setWindowTitle('Buddy · Idea Journal')
+        self.resize(580,465)
+        self.setStyleSheet(STYLE)
+        layout=QVBoxLayout(self)
+        layout.addWidget(QLabel('Buddy’s questions, interests and projects from actual conversations and reflections.'))
+        self.choices=QComboBox()
+        self.choices.currentIndexChanged.connect(self.show_selected)
+        layout.addWidget(self.choices)
+        self.detail=QTextBrowser()
+        self.detail.setReadOnly(True)
+        layout.addWidget(self.detail)
+        row=QHBoxLayout()
+        discuss=QPushButton('Discuss with Buddy')
+        discuss.clicked.connect(self.discuss)
+        row.addWidget(discuss)
+        for label,status in (('Explore','exploring'),('Develop','developing'),
+                              ('Set aside','set_aside'),('Dismiss','dismissed')):
+            button=QPushButton(label)
+            button.clicked.connect(lambda _checked=False, s=status: self.change_status(s))
+            row.addWidget(button)
+        layout.addLayout(row)
+        self.refresh()
+
+    def refresh(self):
+        previous=self.choices.currentData()
+        self.choices.blockSignals(True)
+        self.choices.clear()
+        for idea in self.buddy.memory.ideas(limit=80):
+            self.choices.addItem(idea['title']+' ['+idea['status']+']',idea['id'])
+        index=self.choices.findData(previous)
+        self.choices.setCurrentIndex(index if index>=0 else (0 if self.choices.count() else -1))
+        self.choices.blockSignals(False)
+        self.show_selected()
+
+    def selected(self):
+        current=self.choices.currentData()
+        return next((i for i in self.buddy.memory.ideas(limit=80) if i['id']==current),None)
+
+    def show_selected(self, *_):
+        from html import escape
+        idea=self.selected()
+        if not idea:
+            self.detail.setPlainText('No ideas recorded yet. They grow from actual conversations and saved reflections.')
+        else:
+            self.detail.setHtml('<h3>'+escape(idea['title'])+'</h3><p>'+
+                escape(idea['detail'])+'</p><p><i>Type: '+
+                escape(idea['kind'])+' · Source: '+escape(idea['source'])+
+                ' · Status: '+escape(idea['status'])+'</i></p>')
+
+    def change_status(self, status):
+        idea=self.selected()
+        if idea:
+            self.buddy.memory.set_idea_status(idea['id'],status)
+            self.refresh()
+
+    def discuss(self):
+        idea=self.selected()
+        if not idea: return
+        self.buddy.memory.set_idea_status(idea['id'],'discussed')
+        self.buddy.open_chat()
+        self.buddy.chat_dialog.input.setText(
+            'I saw your saved idea about '+idea['title']+'. '+idea['detail'])
+        self.close()
+
 
 class SettingsDialog(QDialog):
     def __init__(self, buddy):
