@@ -255,6 +255,7 @@ class ChatDialog(QDialog):
             self.conversation_mode = False
             self.conversation_button.setText('Start Conversation Mode')
             self.status.setText('Conversation ended.')
+            QTimer.singleShot(0,self.buddy.sync_camera)
             QTimer.singleShot(1200, self.buddy._maybe_start_wake)
             if self.mic_recording:
                 self.monitor.stop()
@@ -267,6 +268,7 @@ class ChatDialog(QDialog):
             return
         self.conversation_mode = True
         self.conversation_button.setText('End Conversation Mode')
+        QTimer.singleShot(0,self.buddy.sync_camera)
         if not self.mic_recording and self.worker_thread is None and self.voice_thread is None:
             self.toggle_microphone()
 
@@ -409,6 +411,7 @@ class ChatDialog(QDialog):
         self.monitor.stop()
         self._speech_timer.stop()
         self.conversation_mode = False
+        QTimer.singleShot(0,self.buddy.sync_camera)
         self.buddy.bubbles.stop()
         self.speaker.stop()
         QTimer.singleShot(1000, self.buddy._maybe_start_wake)
@@ -583,6 +586,41 @@ class SettingsDialog(QDialog):
         self.wake_status.setWordWrap(True)
         layout.addWidget(self.wake_status)
         self._wake_setup_thread = None
+        layout.addWidget(QLabel('Camera & Vision'))
+        self.camera_enabled=QCheckBox('Allow Buddy to use the local camera')
+        self.camera_enabled.setChecked(buddy._settings.value('camera/enabled',False,type=bool))
+        layout.addWidget(self.camera_enabled)
+        layout.addWidget(QLabel('Camera device'))
+        self.camera_index=QComboBox()
+        for i in range(4):
+            self.camera_index.addItem('Camera '+str(i)+' (Windows index)',i)
+        self.camera_index.setCurrentIndex(max(0,self.camera_index.findData(
+            int(buddy._settings.value('camera/index',0)))))
+        layout.addWidget(self.camera_index)
+        layout.addWidget(QLabel('Face-following pupils (local only)'))
+        self.camera_tracking=QComboBox()
+        for label,value in (('Off','off'),('During Conversation','conversation'),
+                            ('Always while Buddy is running','always')):
+            self.camera_tracking.addItem(label,value)
+        self.camera_tracking.setCurrentIndex(max(0,self.camera_tracking.findData(
+            buddy._settings.value('camera/tracking','off'))))
+        layout.addWidget(self.camera_tracking)
+        self.camera_cloud=QCheckBox('Allow automatic single-frame uploads for relevant visual questions')
+        self.camera_cloud.setChecked(buddy._settings.value('camera/cloud',False,type=bool))
+        self.camera_cloud.setToolTip('Separate permission: images are sent to OpenAI only in active conversations when visually relevant.')
+        layout.addWidget(self.camera_cloud)
+        warning=QLabel('Security: Off by default. Camera frames are not saved. '
+                       'Local face tracking never uploads images. Cloud vision sends '
+                       'one still image to OpenAI only when separately enabled. '
+                       'A camera indicator stays on while the device is open.')
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        save_camera=QPushButton('Save camera permissions')
+        save_camera.clicked.connect(self.save_camera_settings)
+        layout.addWidget(save_camera)
+        shut_camera=QPushButton('Disable Camera Now')
+        shut_camera.clicked.connect(buddy.disable_camera)
+        layout.addWidget(shut_camera)
         layout.addWidget(QLabel('Microphone & Listening'))
         self.mic_choice = QComboBox()
         self.refresh_microphones()
@@ -694,6 +732,16 @@ class SettingsDialog(QDialog):
         update = QPushButton('Check for updates…')
         update.clicked.connect(self.buddy.check_updates)
         layout.addWidget(update)
+
+    def save_camera_settings(self):
+        settings=self.buddy._settings
+        # Cloud upload requires a separate affirmative selection and local camera enabled.
+        enabled=self.camera_enabled.isChecked()
+        settings.setValue('camera/enabled',enabled)
+        settings.setValue('camera/index',self.camera_index.currentData())
+        settings.setValue('camera/tracking',self.camera_tracking.currentData())
+        settings.setValue('camera/cloud',enabled and self.camera_cloud.isChecked())
+        self.buddy.sync_camera()
 
     def refresh_microphones(self):
         previous=self.mic_choice.currentData() if hasattr(self,'mic_choice') else None
