@@ -142,16 +142,28 @@ class Memory:
             emotions=dict(self.db.execute('SELECT name,intensity FROM emotions'))
             events=self.db.execute('SELECT emotion, COUNT(*) FROM experiences GROUP BY emotion').fetchall()
             messages=self.db.execute('SELECT COUNT(*) FROM messages').fetchone()[0]
+            replies=[r[0].lower() for r in self.db.execute(
+                "SELECT content FROM messages WHERE role='assistant' ORDER BY id DESC LIMIT 100")]
         evidence=dict(events)
-        # A numerical score requires evidence. Unknown traits are NOT zeros.
-        traits={'Curiosity': 'curiosity','Confidence':'confidence','Affection':'affection',
-                'Emotional openness':'joy','Independence':None,'Sociability':None,'Playfulness':None}
+        # Frequency of ACTUALLY RECORDED behavior, not assumed psychometric traits.
+        # Hide numerical scores until a few interactions are available.
+        patterns={
+            'Curiosity':('i wonder','i am curious',"i'm curious",'why does','how does'),
+            'Confidence':('i believe','i think',"i'm confident",'i am confident'),
+            'Independence':("i disagree","i don't think","i'm not convinced",'i prefer','i would rather'),
+            'Sociability':('nice to meet','i enjoy talking','i would like to know','i was wondering'),
+            'Emotional openness':('i feel','i care about',"i'm excited","i'm frustrated"),
+            'Playfulness':('haha','heh','lol','that is funny',"that's funny")
+        }
+        sample=len(replies)
+        scores={}
+        for name,phrases in patterns.items():
+            matches=sum(1 for response in replies if any(phrase in response for phrase in phrases))
+            scores[name]=round(100*matches/sample) if sample>=5 else None
         return {
-            'messages':messages,
+            'messages':messages,'sample_replies':sample,
             'emotions':{k:emotions.get(k,2) for k in self.EMOTIONS},
-            'traits':{name:(min(100,emotions.get(key,2)*20) if key and evidence.get(key,0)>=2 else None)
-                      for name,key in traits.items()},
-            'evidence':evidence,
+            'traits':scores,'evidence':evidence,
             'ideas':self.ideas(),'beliefs':self.beliefs(),'reflections':self.reflections(),
             'history':self.history()
         }
