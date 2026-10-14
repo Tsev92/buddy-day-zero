@@ -111,12 +111,22 @@ class ChatDialog(QDialog):
         self.mic_button = QPushButton('🎙 Record')
         self.mic_button.clicked.connect(self.toggle_microphone)
         row.addWidget(self.mic_button)
+        self.finish_button = QPushButton('✓ Finish')
+        self.finish_button.setEnabled(False)
+        self.finish_button.clicked.connect(self.finish_microphone)
+        row.addWidget(self.finish_button)
         layout.addLayout(row)
         self.conversation_button = QPushButton('Start Conversation Mode')
         self.conversation_button.clicked.connect(self.toggle_conversation_mode)
         layout.addWidget(self.conversation_button)
         self.status = QLabel('')
         layout.addWidget(self.status)
+        layout.addWidget(QLabel('Microphone input level'))
+        self.input_meter = QProgressBar()
+        self.input_meter.setRange(0,100)
+        self.input_meter.setValue(0)
+        self.input_meter.setFormat('%v%')
+        layout.addWidget(self.input_meter)
         for message in buddy.memory.recent(80):
             self.append(message['role'], message['content'])
         if not buddy.memory.count():
@@ -153,6 +163,8 @@ class ChatDialog(QDialog):
             self.mic_recording = False
             self.monitor.stop()
             self.mic_button.setText('🎙 Record')
+            self.finish_button.setEnabled(False)
+            self.input_meter.setValue(0)
             self.mic.cancel()
             self.buddy.face.mood = 'idle'
             self.buddy.face.mic_level = 0
@@ -162,14 +174,33 @@ class ChatDialog(QDialog):
             return
         try:
             self.buddy.pause_wake()
-            self.mic.start()
+            self.mic.start(self.buddy._settings.value('mic/id',''))
             self.mic_recording = True
             self._mic_offset = 0
-            self._detector = SilenceDetector()
+            self._detector = SilenceDetector(
+                silence_seconds=float(self.buddy._settings.value('mic/pause',2.5)),
+                threshold=float(self.buddy._settings.value('mic/threshold',0.012)))
             self.monitor.start()
+            self.finish_button.setEnabled(True)
             self.mic_button.setText('■ Cancel')
             self.buddy.face.mood = 'listening'
             self.status.setText('Listening… pause when you finish speaking.')
+        except Exception as exc:
+            self.voice_failed(str(exc))
+
+    def finish_microphone(self):
+        if not self.mic_recording: return
+        self.mic_recording = False
+        self.monitor.stop()
+        self.mic_button.setText('🎙 Record')
+        self.finish_button.setEnabled(False)
+        self.input_meter.setValue(0)
+        try:
+            audio = self.mic.stop()
+            self.buddy.face.mood='thinking'
+            self.buddy.face.mic_level=0
+            self.status.setText('Processing your speech…')
+            self._voice_task('transcribe',audio)
         except Exception as exc:
             self.voice_failed(str(exc))
 
@@ -184,21 +215,16 @@ class ChatDialog(QDialog):
                 self.buddy.face.mic_level = min(1.0, audioop.rms(chunk, 2)/11000)
             except (ValueError, audioop.error):
                 self.buddy.face.mic_level = 0.0
+            self.input_meter.setValue(int(100*self.buddy.face.mic_level))
         if decision == 'send':
-            self.mic_recording = False
-            self.monitor.stop()
-            self.mic_button.setText('Record')
-            try:
-                audio = self.mic.stop()
-                self.buddy.face.mood = 'thinking'
-                self.buddy.face.mic_level = 0
-                self._voice_task('transcribe', audio)
-            except Exception as exc:
-                self.voice_failed(str(exc))
+            self.status.setText('Pause detected; processing speech…')
+            self.finish_microphone()
         elif decision == 'timeout':
             self.monitor.stop()
             self.mic.cancel()
             self.mic_recording = False
+            self.finish_button.setEnabled(False)
+            self.input_meter.setValue(0)
             self.mic_button.setText('Record')
             self.buddy.face.mood = 'idle'
             self.status.setText('No speech detected.')
@@ -215,6 +241,8 @@ class ChatDialog(QDialog):
                 self.monitor.stop()
                 self.mic.cancel()
                 self.mic_recording = False
+                self.finish_button.setEnabled(False)
+                self.input_meter.setValue(0)
                 self.mic_button.setText('Record')
                 self.buddy.face.mood = 'idle'
             return
@@ -516,6 +544,46 @@ class SettingsDialog(QDialog):
         self.wake_status.setWordWrap(True)
         layout.addWidget(self.wake_status)
         self._wake_setup_thread = None
+        layout.addWidget(QLabel('Microphone & Listening'))
+        self.mic_choice = QComboBox()
+        self.refresh_microphones()
+        layout.addWidget(self.mic_choice)
+        mic_refresh=QPushButton('Refresh microphones')
+        mic_refresh.clicked.connect(self.refresh_microphones)
+        layout.addWidget(mic_refresh)
+        layout.addWidget(QLabel('Pause before Buddy responds'))
+        self.pause_choice=QComboBox()
+        for name,secs in (('Short · 1.5 seconds',1.5),('Normal · 2.5 seconds',2.5),
+                          ('Patient · 4 seconds',4.0),('Very patient · 6 seconds',6.0)):
+            self.pause_choice.addItem(name,secs)
+        self.pause_choice.setCurrentIndex(max(0,self.pause_choice.findData(
+            float(buddy._settings.value('mic/pause',2.5)))))
+        layout.addWidget(self.pause_choice)
+        layout.addWidget(QLabel('Microphone sensitivity'))
+        self.sensitivity_choice=QComboBox()
+        for label,threshold in (('Low · Ignore background noise',.025),
+                                ('Normal',.012),('High · Hear quiet speech',.006)):
+            self.sensitivity_choice.addItem(label,threshold)
+        self.sensitivity_choice.setCurrentIndex(max(0,self.sensitivity_choice.findData(
+            float(buddy._settings.value('mic/threshold',.012)))))
+        layout.addWidget(self.sensitivity_choice)
+        save_mic=QPushButton('Save microphone settings')
+        save_mic.clicked.connect(self.save_microphone_settings)
+        layout.addWidget(save_mic)
+        layout.addWidget(QLabel('Idle Reflection & Independent Thoughts'))
+        self.reflect_enabled=QCheckBox('Allow occasional independent reflection (uses API tokens)')
+        self.reflect_enabled.setChecked(buddy._settings.value('mind/reflect_enabled',True,type=bool))
+        layout.addWidget(self.reflect_enabled)
+        layout.addWidget(QLabel('Maximum reflection attempts per day'))
+        self.daily_reflections=QComboBox()
+        for n in (2,4,8):
+            self.daily_reflections.addItem(str(n),n)
+        self.daily_reflections.setCurrentIndex(max(0,self.daily_reflections.findData(
+            int(buddy._settings.value('mind/daily_limit',4)))))
+        layout.addWidget(self.daily_reflections)
+        save_mind=QPushButton('Save reflection settings')
+        save_mind.clicked.connect(self.save_mind_settings)
+        layout.addWidget(save_mind)
         layout.addWidget(QLabel('Voice & Speech'))
         self.voice_choice = QComboBox()
         for v in ('alloy','ash','ballad','coral','echo','fable','nova','onyx','sage','shimmer'):
@@ -587,6 +655,27 @@ class SettingsDialog(QDialog):
         update = QPushButton('Check for updates…')
         update.clicked.connect(self.buddy.check_updates)
         layout.addWidget(update)
+
+    def refresh_microphones(self):
+        previous=self.mic_choice.currentData() if hasattr(self,'mic_choice') else None
+        saved=self.buddy._settings.value('mic/id','')
+        self.mic_choice.clear()
+        self.mic_choice.addItem('System default microphone','')
+        devices=QMediaDevices.audioInputs()
+        for device in devices:
+            self.mic_choice.addItem(device.description(),bytes(device.id()).hex())
+        selected=previous if previous is not None else saved
+        index=self.mic_choice.findData(selected)
+        self.mic_choice.setCurrentIndex(max(0,index))
+
+    def save_microphone_settings(self):
+        self.buddy._settings.setValue('mic/id',self.mic_choice.currentData())
+        self.buddy._settings.setValue('mic/pause',self.pause_choice.currentData())
+        self.buddy._settings.setValue('mic/threshold',self.sensitivity_choice.currentData())
+
+    def save_mind_settings(self):
+        self.buddy._settings.setValue('mind/reflect_enabled',self.reflect_enabled.isChecked())
+        self.buddy._settings.setValue('mind/daily_limit',self.daily_reflections.currentData())
 
     def preview_customization(self, *_):
         options = {key: widget.currentData() for key,widget in self.face_controls.items()}
