@@ -13,6 +13,7 @@ from .bubbles import BubbleController
 from .listening import SilenceDetector
 from .wake import WakeListener, prepare_model
 from .speech_visuals import voice_envelope
+from .vision import LocalCamera, VisionPolicy, relevant_to_camera, cloud_observation
 
 STYLE = """QWidget { background: #101925; color: #e6f3ff; font-family: 'Segoe UI', sans-serif; }
 QPushButton { background: #253b51; border: 1px solid #436079; border-radius: 8px; padding: 7px 11px; }
@@ -25,11 +26,16 @@ QTextBrowser { background: #142132; border: 1px solid #33495f; border-radius: 10
 class ReplyTask(QObject):
     finished = Signal(str)
     failed = Signal(str)
-    def __init__(self, brain, text):
+    def __init__(self, brain, text, visual_jpeg=None):
         super().__init__()
         self.brain, self.text = brain, text
+        self.visual_jpeg=visual_jpeg
     def run(self):
-        try: self.finished.emit(self.brain.reply(self.text))
+        try:
+            observation=None
+            if self.visual_jpeg is not None:
+                observation=cloud_observation(self.visual_jpeg,self.brain.key,self.text)
+            self.finished.emit(self.brain.reply(self.text,visual_observation=observation))
         except Exception as exc: self.failed.emit(str(exc))
 
 class UpdateTask(QObject):
@@ -245,6 +251,7 @@ class ChatDialog(QDialog):
 
     def toggle_conversation_mode(self):
         if self.conversation_mode:
+            self.buddy.sync_camera()
             self.conversation_mode = False
             self.conversation_button.setText('Start Conversation Mode')
             self.status.setText('Conversation ended.')
@@ -356,7 +363,8 @@ class ChatDialog(QDialog):
         self.buddy.pause_wake()
         self.buddy.face.mood = 'thinking'
         self.worker_thread = QThread(self)
-        self.worker = ReplyTask(self.buddy.brain, message)
+        jpeg = self.buddy.capture_for_turn(message)
+        self.worker = ReplyTask(self.buddy.brain, message, jpeg)
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.succeeded)
@@ -367,6 +375,7 @@ class ChatDialog(QDialog):
         self.worker_thread.start()
 
     def succeeded(self, answer):
+        self.buddy.finish_visual_analysis()
         self.append('assistant', answer)
         # Learning happens after the actual reply, never delaying the human.
         QTimer.singleShot(4000, self.buddy._maybe_learn)
@@ -378,6 +387,7 @@ class ChatDialog(QDialog):
             self._voice_task('speak', answer)
 
     def failed(self, error):
+        self.buddy.finish_visual_analysis()
         self.status.setText(error)
         self.append('assistant', f'[Message could not be sent: {error}]')
 
