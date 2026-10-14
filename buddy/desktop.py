@@ -1059,22 +1059,26 @@ class DesktopBuddy(QMainWindow):
 
     def _update_finished(self, result):
         if isinstance(result,dict):
-            if not result['newer']:
-                QMessageBox.information(self,'Buddy Day Zero',f'You are up to date (v{VERSION}).')
-                return
-            answer=QMessageBox.question(self,'Buddy Day Zero update',
-                f"Version {result['version']} is available.\n\n{result['notes'][:500]}\n\nDownload and install?",
-                QMessageBox.Yes | QMessageBox.No)
-            if answer == QMessageBox.Yes:
-                self.face.progress(-1)
-                self._queued_release = result
+            # Defer the modal approval dialog until the check QThread is cleaned up.
+            # Nested dialog event loops previously raced _update_cleanup and lost approval.
+            self._pending_check_result = result
         else:
-            # The user approved before download. Do not ask a second time.
             self._restart_archive = result
             self.face.progress(-1)
-            # A completed, verified download must finish the approved update.
-            # Do not wait for TTS playback or another Check for updates click.
             QTimer.singleShot(200, self._install_and_restart)
+
+    def _show_update_offer(self, result):
+        self.face.progress(None)
+        if not result['newer']:
+            QMessageBox.information(self,'Buddy Day Zero',f'You are up to date (v{VERSION}).')
+            return
+        answer=QMessageBox.question(
+            self,'Buddy Day Zero update',
+            f"Version {result['version']} is available.\\n\\n{result['notes'][:500]}\\n\\nDownload and install?",
+            QMessageBox.Yes | QMessageBox.No)
+        if answer == QMessageBox.Yes:
+            self.face.progress(-1)
+            QTimer.singleShot(0,lambda release=result: self._run_update_task('download',release))
 
     def _announce_restart(self):
         self._announce_thread = QThread(self)
@@ -1141,11 +1145,10 @@ class DesktopBuddy(QMainWindow):
         self.update_worker.deleteLater()
         self.update_thread.deleteLater()
         self.update_thread = None
-        queued=getattr(self,'_queued_release',None)
-        self._queued_release=None
-        if queued:
-            # Post to the event loop after QThread deletion is scheduled.
-            QTimer.singleShot(0, lambda release=queued: self._run_update_task('download', release))
+        result=getattr(self,'_pending_check_result',None)
+        self._pending_check_result=None
+        if result is not None:
+            QTimer.singleShot(0,lambda offer=result: self._show_update_offer(offer))
 
     def open_conversation(self):
         # Start the existing conversation engine without showing the chat window.
