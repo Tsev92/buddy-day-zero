@@ -963,6 +963,15 @@ class DesktopBuddy(QMainWindow):
         self.bubbles.begin('We did it! Update complete!', 3200)
         QTimer.singleShot(3500, self.bubbles.speaking_finished)
 
+    def closeEvent(self,event):
+        if self.reflection_thread is not None:
+            self._close_after_reflection=True
+            self.hide()
+            event.ignore()
+            return
+        self._reflection_timer.stop()
+        super().closeEvent(event)
+
     def showEvent(self, event):
         super().showEvent(event)
         if not self._settings.contains('position'):
