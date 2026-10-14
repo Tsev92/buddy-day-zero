@@ -14,6 +14,7 @@ class Memory:
             self.db.execute('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, created TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN (\'user\',\'assistant\')), content TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS emotions (name TEXT PRIMARY KEY, intensity INTEGER NOT NULL DEFAULT 2)')
             self.db.execute('CREATE TABLE IF NOT EXISTS experiences (id INTEGER PRIMARY KEY, created TEXT NOT NULL, event TEXT NOT NULL, emotion TEXT NOT NULL, impact INTEGER NOT NULL)')
+            self.db.execute("CREATE TABLE IF NOT EXISTS mind_meta (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
             self.db.execute("CREATE TABLE IF NOT EXISTS ideas (id INTEGER PRIMARY KEY, created TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new')")
             self.db.execute("CREATE TABLE IF NOT EXISTS beliefs (topic TEXT PRIMARY KEY, stance TEXT NOT NULL, reason TEXT NOT NULL, confidence INTEGER NOT NULL, updated TEXT NOT NULL)")
             self.db.execute("CREATE TABLE IF NOT EXISTS belief_history (id INTEGER PRIMARY KEY, created TEXT NOT NULL, topic TEXT NOT NULL, old_stance TEXT, new_stance TEXT NOT NULL, evidence TEXT NOT NULL)")
@@ -153,3 +154,13 @@ class Memory:
             'ideas':self.ideas(),'beliefs':self.beliefs(),'reflections':self.reflections(),
             'history':self.history()
         }
+
+    def reflection_due(self):
+        with self.lock:
+            last = self.db.execute("SELECT value FROM mind_meta WHERE name='last_reflection_messages'").fetchone()
+            prior = int(last[0]) if last else 0
+            return self.count() >= 2 and self.count() > prior
+
+    def mark_reflection_attempt(self):
+        with self.lock,self.db:
+            self.db.execute("INSERT OR REPLACE INTO mind_meta(name,value) VALUES('last_reflection_messages',?)",(str(self.count()),))
