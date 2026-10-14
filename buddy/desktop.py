@@ -1,6 +1,6 @@
 """Standalone desktop shell around the original Buddy face and Day Zero brain."""
 from PySide6.QtCore import QObject, Qt, QThread, Signal, QEvent, QSettings, QTimer
-from PySide6.QtGui import QFont, QAction, QKeySequence, QShortcut
+from PySide6.QtGui import QFont, QAction, QKeySequence, QShortcut, QImage, QPixmap
 from PySide6.QtMultimedia import QMediaDevices
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy, QMenu,
@@ -13,7 +13,7 @@ from .bubbles import BubbleController
 from .listening import SilenceDetector
 from .wake import WakeListener, prepare_model
 from .speech_visuals import voice_envelope
-from .vision import LocalCamera, VisionPolicy, relevant_to_camera, cloud_observation
+from .vision import LocalCamera, VisionPolicy, relevant_to_camera, cloud_observation, camera_devices
 
 STYLE = """QWidget { background: #101925; color: #e6f3ff; font-family: 'Segoe UI', sans-serif; }
 QPushButton { background: #253b51; border: 1px solid #436079; border-radius: 8px; padding: 7px 11px; }
@@ -554,6 +554,75 @@ class IdeaJournalDialog(QDialog):
         self.close()
 
 
+class CameraTestDialog(QDialog):
+    """Local-only ephemeral webcam preview; no photos, API calls or recording."""
+    def __init__(self, buddy, index, label):
+        super().__init__(buddy)
+        self.buddy=buddy
+        self.index=int(index)
+        self.setWindowTitle('Test Camera · '+str(label))
+        self.setStyleSheet(STYLE)
+        self.resize(530,440)
+        self.camera=LocalCamera()
+        self.timer=QTimer(self)
+        self.timer.setInterval(100)
+        self.timer.timeout.connect(self.update_preview)
+        layout=QVBoxLayout(self)
+        self.preview=QLabel('Connecting to camera…')
+        self.preview.setMinimumSize(480,320)
+        self.preview.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.preview)
+        self.status=QLabel('This preview stays on your PC. No images are saved or uploaded.')
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        finish=QPushButton('Close camera preview')
+        finish.clicked.connect(self.close)
+        layout.addWidget(finish)
+
+    def start(self):
+        # A webcam should have only one local owner at a time.
+        self.buddy._camera_timer.stop()
+        self.buddy.camera.close()
+        self.buddy.face.camera_active=False
+        self.buddy.face.tracked_face=None
+        try:
+            self.camera.open(self.index)
+            self.buddy.face.camera_active=True
+            self.buddy.face.update()
+            self.timer.start()
+            self.update_preview()
+        except Exception as exc:
+            self.status.setText('Unable to open selected device: '+str(exc))
+            self.preview.setText('No camera image')
+            self.buddy.face.camera_active=False
+            self.buddy.face.update()
+
+    def update_preview(self):
+        try:
+            frame,_=self.camera.read(track=False)
+            if frame is None:
+                self.status.setText('Camera opened but no frames arrived. Try another device.')
+                return
+            rgb=self.camera.cv2.cvtColor(frame,self.camera.cv2.COLOR_BGR2RGB)
+            h,w=rgb.shape[:2]
+            qimage=QImage(rgb.data,w,h,int(rgb.strides[0]),QImage.Format_RGB888).copy()
+            self.preview.setPixmap(QPixmap.fromImage(qimage).scaled(
+                self.preview.size(),Qt.KeepAspectRatio,Qt.SmoothTransformation))
+            self.status.setText('Live local preview · No images saved or uploaded')
+        except Exception as exc:
+            self.status.setText('Camera preview failed: '+str(exc))
+            self.timer.stop()
+
+    def closeEvent(self,event):
+        self.timer.stop()
+        self.camera.close()
+        self.buddy.face.camera_active=False
+        self.buddy.face.update()
+        # Restore preexisting tracking, if still enabled.
+        QTimer.singleShot(0,self.buddy.sync_camera)
+        super().closeEvent(event)
+
+
 class SettingsDialog(QDialog):
     def __init__(self, buddy):
         super().__init__(buddy)
@@ -592,11 +661,20 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.camera_enabled)
         layout.addWidget(QLabel('Camera device'))
         self.camera_index=QComboBox()
-        for i in range(4):
-            self.camera_index.addItem('Camera '+str(i)+' (Windows index)',i)
-        self.camera_index.setCurrentIndex(max(0,self.camera_index.findData(
-            int(buddy._settings.value('camera/index',0)))))
+        self.refresh_cameras()
         layout.addWidget(self.camera_index)
+        buttons=QHBoxLayout()
+        refresh_camera=QPushButton('Refresh camera list')
+        refresh_camera.clicked.connect(self.refresh_cameras)
+        buttons.addWidget(refresh_camera)
+        test_camera=QPushButton('Test Camera')
+        test_camera.clicked.connect(self.test_camera)
+        buttons.addWidget(test_camera)
+        layout.addLayout(buttons)
+        self.camera_status=QLabel('Select a camera and use Test Camera to verify the live image.')
+        self.camera_status.setWordWrap(True)
+        layout.addWidget(self.camera_status)
+        self._camera_preview=None
         layout.addWidget(QLabel('Face-following pupils (local only)'))
         self.camera_tracking=QComboBox()
         for label,value in (('Off','off'),('During Conversation','conversation'),
@@ -732,6 +810,40 @@ class SettingsDialog(QDialog):
         update = QPushButton('Check for updates…')
         update.clicked.connect(self.buddy.check_updates)
         layout.addWidget(update)
+
+    def refresh_cameras(self):
+        previous=self.camera_index.currentData()
+        selected=(int(previous) if previous is not None else
+                  int(self.buddy._settings.value('camera/index',0)))
+        devices=camera_devices()
+        self.camera_index.clear()
+        if devices:
+            for index,name in devices:
+                self.camera_index.addItem(str(name)+' · device '+str(index),int(index))
+            # Some drivers omit OpenCV camera indices; allow diagnostics.
+            if self.camera_index.findData(selected)<0:
+                self.camera_index.addItem('Previously selected device '+str(selected),selected)
+        else:
+            for index in range(4):
+                self.camera_index.addItem('Camera '+str(index)+' · name unavailable',index)
+        self.camera_index.setCurrentIndex(max(0,self.camera_index.findData(selected)))
+        if hasattr(self,'camera_status'):
+            self.camera_status.setText(
+                str(len(devices))+' named camera(s) found. Use Test Camera to verify the image.'
+                if devices else 'Could not discover camera names. Test each numbered device.')
+
+    def test_camera(self):
+        if self._camera_preview is not None:
+            self._camera_preview.close()
+        index=self.camera_index.currentData()
+        if index is None:
+            self.camera_status.setText('No camera selected.')
+            return
+        self._camera_preview=CameraTestDialog(
+            self.buddy,int(index),self.camera_index.currentText())
+        self._camera_preview.setAttribute(Qt.WA_DeleteOnClose,False)
+        self._camera_preview.show()
+        self._camera_preview.start()
 
     def save_camera_settings(self):
         settings=self.buddy._settings
