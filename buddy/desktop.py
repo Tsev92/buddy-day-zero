@@ -44,6 +44,18 @@ class UpdateTask(QObject):
             else: self.finished.emit(download_verified(self.release,self.folder,self.progress.emit))
         except Exception as exc: self.failed.emit(str(exc))
 
+class LearningTask(QObject):
+    finished = Signal(str)
+    def __init__(self, brain):
+        super().__init__()
+        self.brain=brain
+    def run(self):
+        try:
+            self.finished.emit(self.brain.process_exchange() or 'no_change')
+        except Exception:
+            self.finished.emit('error')
+
+
 class ReflectTask(QObject):
     finished = Signal(bool)
     failed = Signal(str)
@@ -356,6 +368,8 @@ class ChatDialog(QDialog):
 
     def succeeded(self, answer):
         self.append('assistant', answer)
+        # Learning happens after the actual reply, never delaying the human.
+        QTimer.singleShot(4000, self.buddy._maybe_learn)
         self.status.setText('')
         self.buddy.face.express('curious', 2.0)
         self._reply_for_bubble = answer
@@ -855,6 +869,12 @@ class DesktopBuddy(QMainWindow):
         self.ideas_dialog = None
         self.update_thread = None
         self.reflection_thread = None
+        self.learning_thread = None
+        self._learning_timer = QTimer(self)
+        self._learning_timer.setInterval(60000)
+        self._learning_timer.timeout.connect(self._maybe_learn)
+        self._learning_timer.start()
+        QTimer.singleShot(8000,self._maybe_learn)
         self._reflection_timer = QTimer(self)
         self._reflection_timer.setInterval(10*60*1000)
         self._reflection_timer.timeout.connect(self._maybe_reflect)
@@ -906,11 +926,46 @@ class DesktopBuddy(QMainWindow):
         self.ideas_dialog.show()
         self.ideas_dialog.raise_()
 
+    def _maybe_learn(self):
+        from datetime import datetime, timezone
+        if self.learning_thread is not None or self.reflection_thread is not None or self.update_thread is not None:
+            return
+        if self.chat_dialog is not None and self.chat_dialog.worker_thread is not None:
+            return
+        today=datetime.now(timezone.utc).date().isoformat()
+        # Maximum twelve extraction calls per UTC day, including no-change outcomes.
+        if self.memory.learning_count_today(today)>=12:
+            return
+        if self.memory.next_unprocessed_exchange() is None:
+            return
+        self.learning_thread=QThread(self)
+        self.learning_worker=LearningTask(self.brain)
+        self.learning_worker.moveToThread(self.learning_thread)
+        self.learning_thread.started.connect(self.learning_worker.run)
+        self.learning_worker.finished.connect(self._learning_ready)
+        self.learning_worker.finished.connect(self.learning_thread.quit)
+        self.learning_thread.finished.connect(self._learning_cleanup)
+        self.learning_thread.start()
+
+    def _learning_ready(self, status):
+        if self.character_dialog is not None and self.character_dialog.isVisible():
+            self.character_dialog.refresh()
+        if self.ideas_dialog is not None and self.ideas_dialog.isVisible():
+            self.ideas_dialog.refresh()
+
+    def _learning_cleanup(self):
+        self.learning_worker.deleteLater()
+        self.learning_thread.deleteLater()
+        self.learning_worker=self.learning_thread=None
+        if getattr(self,'_close_after_learning',False):
+            self._close_after_learning=False
+            QTimer.singleShot(0,self.close)
+
     def _maybe_reflect(self):
         from datetime import datetime, timezone
         if not self._settings.value('mind/reflect_enabled',True,type=bool):
             return
-        if self.reflection_thread is not None or self.update_thread is not None:
+        if self.reflection_thread is not None or self.learning_thread is not None or self.update_thread is not None:
             return
         if self.chat_dialog is not None:
             chat = self.chat_dialog
@@ -984,12 +1039,18 @@ class DesktopBuddy(QMainWindow):
         QTimer.singleShot(3500, self.bubbles.speaking_finished)
 
     def closeEvent(self,event):
+        if self.learning_thread is not None:
+            self._close_after_learning=True
+            self.hide()
+            event.ignore()
+            return
         if self.reflection_thread is not None:
             self._close_after_reflection=True
             self.hide()
             event.ignore()
             return
         self._reflection_timer.stop()
+        self._learning_timer.stop()
         super().closeEvent(event)
 
     def showEvent(self, event):
