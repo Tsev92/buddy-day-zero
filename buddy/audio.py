@@ -136,10 +136,15 @@ class Microphone(QObject):
         self.buffer = None
         self.recorder = None
 
-    def start(self):
+    def start(self, device_id=None):
         if self.source is not None:
             raise RuntimeError("Already recording.")
         device = QMediaDevices.defaultAudioInput()
+        if device_id:
+            choices = [d for d in QMediaDevices.audioInputs() if bytes(d.id()).hex() == str(device_id)]
+            if not choices:
+                raise RuntimeError('Selected microphone is disconnected. Choose another in Settings.')
+            device = choices[0]
         if device.isNull():
             raise RuntimeError("No microphone is available.")
         fmt = QAudioFormat()
