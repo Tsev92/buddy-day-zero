@@ -308,6 +308,56 @@ class PresentationTests(unittest.TestCase):
             self.assertEqual(reloaded.reflection_calls_today(reloaded.reflections()[0]['created'][:10]),1)
             reloaded.db.close()
 
+    def test_turn_intent_distinguishes_goodbye_correction_and_self_question(self):
+        from buddy.brain import conversation_intent, response_guidance, response_problem
+        self.assertEqual(conversation_intent("How are you today?"),'wellbeing')
+        self.assertEqual(conversation_intent("I want to know what's on your mind."),'self_question')
+        self.assertEqual(conversation_intent("Stop asking me what's on my mind."),'correction')
+        self.assertEqual(conversation_intent("That's enough for now we can end conversation."),'goodbye')
+        self.assertIn('Answer how YOU are',response_guidance('How are you?',0,[]))
+        self.assertTrue(response_problem('How are you?',
+            "Ready for whatever's on your mind. How about you?",[]))
+        self.assertTrue(response_problem("What's on your mind?",
+            "Lately I've been thinking about who I am.",[]))
+
+    def test_personality_repair_blocks_fake_reflection_and_unwanted_question(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            brain=Brain(memory,key='fake-test-api-key')
+            def response(text):
+                return io.BytesIO(json.dumps({'choices':[{'message':{'content':text}}]}).encode())
+            for input_text,first,repaired in [
+                ('How are you today?',"Ready to help! How about you?",
+                 "I feel curious. I haven't formed much of an opinion about myself yet."),
+                ("I want to know what's on your mind.",
+                 "Lately I've been thinking about my personality. What's on your mind?",
+                 "I'm wondering how to tell when a question is too personal."),
+                ("Stop asking me what's on my mind.",
+                 "Sure! What's on your mind?",'Fair. I was doing that a lot.'),
+                ("That's enough for now we can end conversation.",
+                 "Sure, but what would you like to talk about next?",'Alright. Talk later.')
+            ]:
+                with patch('buddy.brain.urllib.request.urlopen',
+                           side_effect=[response(first),response(repaired)]) as api:
+                    self.assertEqual(brain.reply(input_text),repaired)
+                    self.assertEqual(api.call_count,2)
+            self.assertEqual(memory.count(),8)
+            self.assertEqual(memory.reflections(),[])
+            memory.db.close()
+
+    def test_grounded_answer_skips_extra_repair_call(self):
+        import json
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            brain=Brain(memory,key='fake-test-api-key')
+            reply="I'm curious about why people value politeness so much."
+            raw=io.BytesIO(json.dumps({'choices':[{'message':{'content':reply}}]}).encode())
+            with patch('buddy.brain.urllib.request.urlopen',return_value=raw) as api:
+                self.assertEqual(brain.reply("What's on your mind?"),reply)
+                api.assert_called_once()
+            memory.db.close()
+
     def test_reflection_rejects_unverifiable_evidence(self):
         import json
         with tempfile.TemporaryDirectory() as folder:
