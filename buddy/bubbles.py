@@ -6,8 +6,8 @@ before playback, and the bubble uses a monotonic timer with safe completion.
 import math
 import re
 from PySide6.QtCore import Qt, QRectF, QTimer, QElapsedTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QTextDocument, QFont, QPalette, QAbstractTextDocumentLayout
-from PySide6.QtWidgets import QWidget, QApplication
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont
+from PySide6.QtWidgets import QWidget, QApplication, QTextEdit, QFrame
 
 
 def split_phrases(text, max_chars=82):
@@ -37,71 +37,84 @@ def visible_words(text, fraction):
 
 
 class SpeechBubble(QWidget):
+    """Paint the balloon only. A real QTextEdit owns text layout and scrolling.
+
+    This restores the pre-Day-Zero rendering path, avoiding manual QTextDocument
+    paint calls that failed to repaint reliably on Windows.
+    """
     WIDTH = 300
     MIN_HEIGHT = 66
-    MARGIN = 17
-    TEXT_WIDTH = WIDTH - 2 * 33
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint |
                          Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setFixedSize(self.WIDTH, self.MIN_HEIGHT)
         self.full_text = ''
         self.content = ''
         self.tint = QColor('#a78bfa')
         self.tail_side = 'left'
-        self._scroll = 0.0
-        self._scroll_target = 0.0
         self._max_height = 203
-        self.document = QTextDocument(self)
-        self.document.setDocumentMargin(0)
-        self.document.setDefaultFont(QFont('Segoe UI', 10))
-        self.document.setTextWidth(self.TEXT_WIDTH)
+        self._scroll = self._scroll_target = 0.0
+        self.text_view = QTextEdit(self)
+        self.text_view.setReadOnly(True)
+        self.text_view.setFrameStyle(QFrame.NoFrame)
+        self.text_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.text_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.text_view.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.text_view.setStyleSheet(
+            'QTextEdit { background: transparent; color: #f0f4ff; border: none; '
+            'padding: 1px; font: 10pt "Segoe UI"; }')
+        self.text_view.document().setDocumentMargin(1)
+        self.text_view.setGeometry(29, 14, self.WIDTH-58, self.MIN_HEIGHT-28)
+        self.text_view.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setWindowTitle('Buddy speech')
 
     def set_text(self, text, final=False):
         self.content = text
-        self.document.setPlainText(text)
-        # Document height is the full text height, never a truncated sentence.
-        needed = math.ceil(self.document.size().height()) + 32
+        # Use QTextEdit's own layout and scroll logic, as original Buddy did.
+        self.text_view.setPlainText(text)
+        doc = self.text_view.document()
+        doc.setTextWidth(max(1, self.text_view.viewport().width()-4))
+        needed = math.ceil(doc.size().height()) + 32
         height = max(self.MIN_HEIGHT, min(self._max_height, needed))
-        if self.height() != height:
+        if height != self.height():
             self.setFixedHeight(height)
-        inner_height = max(1, height - 30)
-        self._scroll_target = max(0.0, self.document.size().height() - inner_height)
+        bar = self.text_view.verticalScrollBar()
+        self._scroll_target = float(bar.maximum())
         if final:
+            bar.setValue(bar.maximum())
             self._scroll = self._scroll_target
         self.update()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.text_view.setGeometry(29, 14, self.width()-58, max(1, self.height()-28))
+
     def animate_scroll(self):
-        if abs(self._scroll_target - self._scroll) > 0.1:
-            self._scroll += (self._scroll_target - self._scroll) * 0.28
-            self.update()
-        else:
-            self._scroll = self._scroll_target
+        bar = self.text_view.verticalScrollBar()
+        self._scroll_target = float(bar.maximum())
+        current = bar.value()
+        target = bar.maximum()
+        if target > current:
+            bar.setValue(min(target, max(current + 1, int(current + (target-current)*0.32))))
+        self._scroll = float(bar.value())
 
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         h = self.height()
-        body = QRectF(13, 5, self.width() - 26, h - 10)
+        body = QRectF(13, 5, self.width()-26, h-10)
         path = QPainterPath()
         path.addRoundedRect(body, 16, 16)
-        # Horizontal tail always faces the center of Buddy's floating face.
         cy = h / 2
         tail = QPainterPath()
         if self.tail_side == 'left':
-            tail.moveTo(16, cy - 13)
-            tail.lineTo(1, cy)
-            tail.lineTo(16, cy + 13)
+            tail.moveTo(16, cy-13); tail.lineTo(1, cy); tail.lineTo(16, cy+13)
         else:
             w = self.width()
-            tail.moveTo(w - 16, cy - 13)
-            tail.lineTo(w - 1, cy)
-            tail.lineTo(w - 16, cy + 13)
+            tail.moveTo(w-16, cy-13); tail.lineTo(w-1, cy); tail.lineTo(w-16, cy+13)
         path = path.united(tail)
         glow = QColor(self.tint)
         glow.setAlpha(48)
@@ -110,16 +123,7 @@ class SpeechBubble(QWidget):
         p.drawPath(path)
         p.setPen(QPen(self.tint, 2.2))
         p.drawPath(path)
-        p.save()
-        p.setClipRect(QRectF(28, 16, self.TEXT_WIDTH + 2, h - 30))
-        p.translate(30, 16 - self._scroll)
-        self.document.setDefaultStyleSheet('body { color: #f0f4ff; }')
-        context = QAbstractTextDocumentLayout.PaintContext()
-        context.palette.setColor(QPalette.ColorRole.Text, QColor('#f0f4ff'))
-        self.document.documentLayout().draw(p, context)
-        p.restore()
         p.end()
-
 
 class BubbleController:
     """One stable window for the entire utterance, with independent reveal timer."""
