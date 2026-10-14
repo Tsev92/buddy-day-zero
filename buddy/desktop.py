@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
     QTextBrowser, QVBoxLayout, QWidget, QMessageBox, QCheckBox, QComboBox)
 from .face import Face
 from .version import VERSION
-from .audio import Microphone, Speaker, transcribe_wav, synthesize_wav
+from .audio import Microphone, Speaker, transcribe_wav, synthesize_wav, normalize_pcm_wav
 from .updates import check_release, download_verified, UpdateError
 from .bubbles import BubbleController
 from .listening import SilenceDetector
@@ -240,13 +240,12 @@ class ChatDialog(QDialog):
                 self._send_transcription = True
         else:
             try:
-                import wave
-                from io import BytesIO
-                with wave.open(BytesIO(value), 'rb') as w:
-                    duration = int(1000 * w.getnframes() / max(1, w.getframerate()))
-                self._speech_levels = voice_envelope(value)
+                # Streamed WAV headers can claim hours of nonexistent samples.
+                # Feed BOTH the player and caption clock the same repaired audio.
+                repaired_audio, duration = normalize_pcm_wav(value)
+                self._speech_levels = voice_envelope(repaired_audio)
                 self.buddy.bubbles.begin(self._reply_for_bubble, duration)
-                self.speaker.play_wav(value)
+                self.speaker.play_wav(repaired_audio)
                 self.status.setText('')
             except Exception as exc:
                 self.voice_failed(str(exc))
