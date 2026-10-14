@@ -760,7 +760,9 @@ class DesktopBuddy(QMainWindow):
             # The user approved before download. Do not ask a second time.
             self._restart_archive = result
             self.face.progress(-1)
-            self._announce_restart()
+            # A completed, verified download must finish the approved update.
+            # Do not wait for TTS playback or another Check for updates click.
+            QTimer.singleShot(200, self._install_and_restart)
 
     def _announce_restart(self):
         self._announce_thread = QThread(self)
@@ -804,14 +806,19 @@ class DesktopBuddy(QMainWindow):
         archive = getattr(self, '_restart_archive', None)
         if archive is None:
             return
-        self._restart_archive = None
         import os, sys, subprocess
         from pathlib import Path
         root = Path(__file__).resolve().parent.parent
-        subprocess.Popen([sys.executable, str(root/'update_helper.py'),
-                          '--root', str(root), '--archive', str(archive),
-                          '--pid', str(os.getpid())], cwd=root,
-                         creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+        try:
+            subprocess.Popen([sys.executable, str(root/'update_helper.py'),
+                              '--root', str(root), '--archive', str(archive),
+                              '--pid', str(os.getpid())], cwd=root,
+                             creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
+        except OSError as exc:
+            self.face.progress(None)
+            QMessageBox.warning(self, 'Update could not start', str(exc))
+            return
+        self._restart_archive = None
         QApplication.instance().quit()
 
     def _update_failed(self, message):
@@ -824,7 +831,9 @@ class DesktopBuddy(QMainWindow):
         self.update_thread = None
         queued=getattr(self,'_queued_release',None)
         self._queued_release=None
-        if queued: self._run_update_task('download',queued)
+        if queued:
+            # Post to the event loop after QThread deletion is scheduled.
+            QTimer.singleShot(0, lambda release=queued: self._run_update_task('download', release))
 
     def open_conversation(self):
         # Start the existing conversation engine without showing the chat window.
