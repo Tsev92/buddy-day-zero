@@ -861,6 +861,10 @@ class DesktopBuddy(QMainWindow):
         self._drag_window_origin = None
         self._did_drag = False
         self._settings = QSettings('BuddyDayZero', 'Desktop')
+        self.camera=LocalCamera()
+        self._camera_timer=QTimer(self)
+        self._camera_timer.setInterval(180)
+        self._camera_timer.timeout.connect(self._camera_tick)
         self.face.customize(
             eyes=self._settings.value('appearance/eyes','classic'),
             pupils=self._settings.value('appearance/pupils','oval'),
@@ -942,6 +946,96 @@ class DesktopBuddy(QMainWindow):
         self.ideas_dialog.refresh()
         self.ideas_dialog.show()
         self.ideas_dialog.raise_()
+
+    def vision_policy(self):
+        return VisionPolicy(
+            enabled=self._settings.value('camera/enabled',False,type=bool),
+            tracking=str(self._settings.value('camera/tracking','off')),
+            cloud=self._settings.value('camera/cloud',False,type=bool),
+            camera_index=int(self._settings.value('camera/index',0)))
+
+    def camera_conversation_active(self):
+        return self.chat_dialog is not None and (
+            self.chat_dialog.conversation_mode or self.chat_dialog.isVisible())
+
+    def sync_camera(self):
+        policy=self.vision_policy()
+        if not policy.may_track(self.camera_conversation_active()):
+            self._camera_timer.stop()
+            self.camera.close()
+            self.face.camera_active=False
+            self.face.tracked_face=None
+            self.face.update()
+            return
+        if not self.camera.active:
+            try:
+                self.camera.open(policy.camera_index)
+            except Exception as exc:
+                self._camera_timer.stop()
+                self.face.camera_active=False
+                self.setToolTip('Camera unavailable: '+str(exc))
+                return
+        self.face.camera_active=True
+        if not self._camera_timer.isActive():
+            self._camera_timer.start()
+
+    def _camera_tick(self):
+        policy=self.vision_policy()
+        if not policy.may_track(self.camera_conversation_active()):
+            self.sync_camera()
+            return
+        try:
+            _,face=self.camera.read(track=True)
+            self.face.tracked_face=face
+        except Exception as exc:
+            self.disable_camera()
+            self.setToolTip('Camera stopped: '+str(exc))
+
+    def disable_camera(self):
+        # Hardware-facing kill switch, not only a prompt to Buddy's model.
+        self._settings.setValue('camera/enabled',False)
+        self._camera_timer.stop()
+        self.camera.close()
+        self.face.camera_active=False
+        self.face.camera_analyzing=False
+        self.face.tracked_face=None
+        self.face.update()
+        if self.settings_dialog is not None:
+            self.settings_dialog.camera_enabled.setChecked(False)
+
+    def finish_visual_analysis(self):
+        self.face.camera_analyzing=False
+        self.sync_camera()
+        self.face.update()
+
+    def capture_for_turn(self, text):
+        """Only an explicit local permission plus contextual relevance can open webcam."""
+        policy=self.vision_policy()
+        if not policy.may_capture(self.camera_conversation_active(),relevant_to_camera(text)):
+            return None
+        try:
+            self.face.camera_analyzing=True
+            self.face.update()
+            if not self.camera.active:
+                self.camera.open(policy.camera_index)
+            self.face.camera_active=True
+            # Capture just a current frame; no file or persistent photo archive.
+            frame,_=self.camera.read(track=False)
+            jpeg=self.camera.still(frame)
+            if not policy.may_track(self.camera_conversation_active()):
+                self._camera_timer.stop()
+                self.camera.close()
+                self.face.camera_active=False
+            if jpeg is None:
+                raise RuntimeError('Camera produced no usable frame.')
+            return jpeg
+        except Exception as exc:
+            self.face.camera_analyzing=False
+            self.sync_camera()
+            self.setToolTip('Vision capture unavailable: '+str(exc))
+            return None
+        finally:
+            self.face.update()
 
     def _maybe_learn(self):
         from datetime import datetime, timezone
@@ -1068,6 +1162,9 @@ class DesktopBuddy(QMainWindow):
             return
         self._reflection_timer.stop()
         self._learning_timer.stop()
+        self._camera_timer.stop()
+        self.camera.close()
+        self.face.camera_active=False
         super().closeEvent(event)
 
     def showEvent(self, event):
@@ -1123,6 +1220,8 @@ class DesktopBuddy(QMainWindow):
             menu.addAction('🎙 Start Conversation Mode', self.open_conversation)
         menu.addAction('💡 Idea Journal', self.open_idea_journal)
         menu.addAction('🧠 Character Sheet', self.open_character_sheet)
+        if self._settings.value('camera/enabled',False,type=bool):
+            menu.addAction('📷 Disable Camera Now', self.disable_camera)
         menu.addAction('⚙ Settings', self.open_settings)
         menu.addAction('↻ Check for updates', self.check_updates)
         menu.addSeparator()
@@ -1263,6 +1362,7 @@ class DesktopBuddy(QMainWindow):
         if self.chat_dialog is None: self.chat_dialog = ChatDialog(self)
         self.chat_dialog.show(); self.chat_dialog.raise_(); self.chat_dialog.activateWindow()
         self.chat_dialog.input.setFocus()
+        self.sync_camera()
 
     def open_settings(self):
         if self.settings_dialog is None: self.settings_dialog = SettingsDialog(self)
