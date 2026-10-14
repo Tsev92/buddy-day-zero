@@ -377,7 +377,7 @@ class SettingsDialog(QDialog):
             ('eyes','Eyes', ('classic','pupils','round','sleepy','pixel')),
             ('mouth','Mouth', ('classic','smile','wry','cat','pixel','lips')),
             ('eyebrows','Eyebrows', ('single','both','none')),
-            ('color','Face color', ('#a8ecff','#bda7ff','#9becba','#ffc58f','#ffc1de')))
+            ('color','Face color', ('#a8ecff','#bda7ff','#9becba','#ffc58f','#ffc1de'))
         )
         current = {'eyes':buddy.face.eye_style,'mouth':buddy.face.mouth_style,
                    'eyebrows':buddy.face.eyebrow_style,'color':buddy.face.eye_color}
