@@ -58,11 +58,14 @@ def transcribe_wav(wav_data):
     return text
 
 
-def synthesize_wav(text, voice="alloy"):
+def synthesize_wav(text, voice="alloy", model="tts-1", speed=1.0):
     if voice not in {"alloy","ash","ballad","coral","echo","fable","nova","onyx","sage","shimmer"}:
         voice = "alloy"
+    if model not in ('tts-1','tts-1-hd','gpt-4o-mini-tts'):
+        model = 'tts-1'
+    speed = max(.5,min(2.0,float(speed)))
     data = json.dumps({
-        "model": "tts-1", "voice": voice,
+        "model": model, "voice": voice, "speed": speed,
         "input": text[:4000], "response_format": "wav"
     }).encode("utf-8")
     audio = _request("https://api.openai.com/v1/audio/speech", data,
