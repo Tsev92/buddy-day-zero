@@ -21,7 +21,8 @@ class Face(QWidget):
         self.expression_until = 0.0
         self.audio_level = 0.0
         self.mic_level = 0.0
-        self.eye_style = 'pupils'
+        self.eye_style = 'classic'
+        self.pupil_style = 'oval'
         self.mouth_style = 'classic'
         self.eye_color = '#a8ecff'
         self.eyebrow_style = 'single'
@@ -44,9 +45,11 @@ class Face(QWidget):
         self.timer.timeout.connect(self.animate)
         self.timer.start(35)
 
-    def customize(self, eyes=None, mouth=None, color=None, eyebrows=None):
+    def customize(self, eyes=None, mouth=None, color=None, eyebrows=None, pupils=None):
         if eyes in ('classic','pupils','round','sleepy','pixel'):
-            self.eye_style = eyes
+            self.eye_style = 'classic' if eyes == 'pupils' else eyes
+            if eyes == 'pupils': self.pupil_style = 'oval'
+        if pupils in ('none','oval','round','slit','pixel'): self.pupil_style = pupils
         if mouth in ('classic','smile','wry','cat','pixel','lips'):
             self.mouth_style = mouth
         if color in ('#a8ecff','#bda7ff','#9becba','#ffc58f','#ffc1de'):
@@ -234,7 +237,7 @@ class Face(QWidget):
             p.setBrush(eye)
             if self.eye_style == 'pixel': p.drawRect(rect)
             else: p.drawRoundedRect(rect,min(width,height)/2,min(width,height)/2)
-            if self.eye_style in ('pupils','round','sleepy','pixel') and height > 17:
+            if self.pupil_style != 'none' and height > 17:
                 p.save()
                 clip = QPainterPath()
                 if self.eye_style == 'pixel': clip.addRect(rect)
@@ -243,7 +246,9 @@ class Face(QWidget):
                 p.setBrush(QColor('#344d6c'))
                 px = cx + max(-11,min(11,self.gaze_x*.7))
                 py = cy + max(-13,min(13,self.gaze_y*.65 - (8 if self.mood == 'thinking' else 0)))
-                if self.eye_style == 'pixel': p.drawRect(QRectF(px-6,py-12,12,24))
+                if self.pupil_style == 'pixel': p.drawRect(QRectF(px-7,py-10,14,20))
+                elif self.pupil_style == 'round': p.drawEllipse(QRectF(px-11,py-11,22,22))
+                elif self.pupil_style == 'slit': p.drawRoundedRect(QRectF(px-4,py-16,8,32),4,4)
                 else: p.drawRoundedRect(QRectF(px-7,py-14,14,28),7,7)
                 p.restore()
             if e == "surprised" and self.blink_amount > .5:
@@ -273,76 +278,84 @@ class Face(QWidget):
                 brow.moveTo(bx-18,39)
                 brow.quadTo(bx,23-arch+wiggle,bx+18,36)
                 p.drawPath(brow)
-        # Mouth family matches the same rounded, softly illuminated eye language.
-        mouth_color = QColor(self.eye_color)
-        p.setPen(QPen(mouth_color,4.5,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+
+        # Mouth selection is structural: emotional poses never substitute another style.
+        color = QColor(self.eye_color)
+        cx,cy = (176.,143.) if self.mood == 'thinking' else (160.,145.)
+        talking = self.mood == 'speaking'
+        amp = max(0.,min(1.,self.audio_level))
+        gap = (2+21*amp) if talking else (10 if e == 'surprised' else 0)
+        smirk = self.mood == 'thinking' or e in ('skeptical','mischievous','curious')
+        happy = e in ('pleased','amused','proud','excited','inspired')
+        p.setPen(QPen(color,4.5,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
         p.setBrush(Qt.NoBrush)
-        cx,cy = (177.0,143.0) if self.mood == 'thinking' else (160.0,145.0)
-        if self.mood == 'thinking':
-            path = QPainterPath()
-            path.moveTo(cx-12,cy+5)
-            path.quadTo(cx+2,cy+8,cx+13,cy-8)
-            p.drawPath(path)
-            p.restore()
-            p.end()
-            return
         if self.mouth_style == 'lips':
-            p.setBrush(mouth_color)
-            opening = max(1.0, 13*self.audio_level) if self.mood == 'speaking' else 2.2
-            lips = QPainterPath()
-            lips.moveTo(cx-25,cy)
-            lips.cubicTo(cx-13,cy-12,cx-5,cy-10,cx,cy-5)
-            lips.cubicTo(cx+6,cy-10,cx+14,cy-12,cx+25,cy)
-            lips.cubicTo(cx+14,cy+12+opening,cx-14,cy+12+opening,cx-25,cy)
-            p.drawPath(lips)
-            p.setPen(QPen(QColor('#33405d'),2))
-            p.drawLine(QPointF(cx-18,cy+2),QPointF(cx+18,cy+2))
-            p.restore()
-            p.end()
-            return
-        path = QPainterPath()
-        if self.mood == "speaking":
-            opening = 2.5 + 19 * max(0.0, min(1.0, self.audio_level))
-            p.setPen(Qt.NoPen); p.setBrush(mouth_color)
-            p.drawRoundedRect(QRectF(cx-12,cy-opening/2,24,opening),min(10,opening/2),min(10,opening/2))
-        elif e in ("excited","inspired","surprised"):
-            p.setPen(Qt.NoPen); p.setBrush(mouth_color)
-            radius = 10 if e == "surprised" else 13
-            p.drawEllipse(QRectF(cx-radius,cy-radius*.65,radius*2,radius*1.3))
-            if e != "surprised":
-                p.setBrush(dark); p.drawEllipse(QRectF(cx-6,cy-3,12,9))
+            # Both lip contours and inner mouth cavity move during speech.
+            left,right = cx-24,cx+24
+            top = QPainterPath()
+            top.moveTo(left,cy)
+            top.cubicTo(cx-15,cy-12,cx-5,cy-10,cx,cy-5)
+            top.cubicTo(cx+6,cy-11,cx+14,cy-12,right,cy-(4 if smirk else 0))
+            bottom = QPainterPath()
+            bottom.moveTo(left,cy)
+            bottom.cubicTo(cx-13,cy+11+gap,cx+13,cy+11+gap,right,cy-(4 if smirk else 0))
+            if gap:
+                cavity = QPainterPath()
+                cavity.moveTo(left+4,cy+1)
+                cavity.quadTo(cx,cy+1,right-4,cy-(3 if smirk else 0))
+                cavity.quadTo(cx,cy+gap+9,left+4,cy+1)
+                p.setPen(Qt.NoPen);p.setBrush(QColor('#131a2b'));p.drawPath(cavity)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(color,4.5,Qt.SolidLine,Qt.RoundCap))
+            p.drawPath(top);p.drawPath(bottom)
+            if not gap:
+                seam = QPainterPath()
+                seam.moveTo(left+5,cy+1)
+                seam.quadTo(cx,cy+4,right-5,cy-(3 if smirk else 0))
+                p.setPen(QPen(QColor('#34415a'),2.5,Qt.SolidLine,Qt.RoundCap))
+                p.drawPath(seam)
         elif self.mouth_style == 'pixel':
-            p.setBrush(mouth_color); p.setPen(Qt.NoPen)
-            p.drawRect(QRectF(cx-15,cy-2,30,9))
+            p.setPen(Qt.NoPen);p.setBrush(color)
+            p.drawRect(QRectF(cx-18,cy-3,36,6))
+            if gap:
+                p.drawRect(QRectF(cx-13,cy+3,26,max(5,round(gap/5)*5)))
+                p.setBrush(QColor('#222943'))
+                p.drawRect(QRectF(cx-8,cy+4,16,max(3,gap-2)))
+            elif smirk: p.drawRect(QRectF(cx+12,cy-9,6,12))
+            elif happy: p.drawRect(QRectF(cx-12,cy+3,24,6))
         elif self.mouth_style == 'cat':
-            path.moveTo(cx-20,cy-5); path.quadTo(cx-10,cy+14,cx,cy)
-            path.quadTo(cx+10,cy+14,cx+20,cy-5); p.drawPath(path)
+            line = QPainterPath()
+            line.moveTo(cx-20,cy-6)
+            line.quadTo(cx-11,cy+12+gap*.5,cx,cy)
+            line.quadTo(cx+11,cy+12+gap*.5,cx+20,cy-6-(5 if smirk else 0))
+            p.drawPath(line)
+            if gap:
+                p.setPen(Qt.NoPen);p.setBrush(color)
+                p.drawEllipse(QRectF(cx-8,cy+4,16,max(5,gap)))
         elif self.mouth_style == 'wry':
-            path.moveTo(cx-10,cy+5); path.quadTo(cx+5,cy+11,cx+20,cy-8); p.drawPath(path)
+            line = QPainterPath()
+            line.moveTo(cx-18,cy+6)
+            line.quadTo(cx,cy+10+gap,cx+21,cy-8-(4 if smirk else 0))
+            p.drawPath(line)
+            if gap:
+                p.setPen(Qt.NoPen);p.setBrush(color)
+                p.drawEllipse(QRectF(cx-6,cy+4,14,max(4,gap)))
         elif self.mouth_style == 'smile':
-            path.moveTo(cx-20,cy-5); path.quadTo(cx,cy+24,cx+20,cy-5); p.drawPath(path)
-        elif e in ("pleased","amused","proud","mischievous"):
-            path.moveTo(cx-17,cy-5)
-            path.cubicTo(cx-8,cy+12,cx+8,cy+12,cx+17,cy-5 if e!="mischievous" else cy-10)
-            p.drawPath(path)
-        elif e == "worried":
-            path.moveTo(cx-12,cy+4)
-            path.quadTo(cx,cy-9,cx+12,cy+4)
-            p.drawPath(path)
-        elif e == "flustered":
-            p.drawLine(QPointF(cx-9,cy),QPointF(cx+9,cy+2))
-        elif e == "skeptical":
-            path.moveTo(cx-13,cy+2); path.quadTo(cx,cy-3,cx+13,cy+1); p.drawPath(path)
-        elif e == "sleepy":
-            p.drawLine(QPointF(cx-9,cy),QPointF(cx+9,cy))
-        elif e == "determined":
-            p.drawLine(QPointF(cx-13,cy+2),QPointF(cx+13,cy+2))
-        elif e == "thoughtful":
-            p.setPen(Qt.NoPen); p.setBrush(mouth_color)
-            p.drawEllipse(QRectF(cx-4,cy-3,8,8))
-        elif e == "curious":
-            path.moveTo(cx-11,cy-2); path.quadTo(cx+1,cy+9,cx+12,cy-1); p.drawPath(path)
+            line = QPainterPath()
+            line.moveTo(cx-20,cy-5)
+            line.quadTo(cx,cy+19+gap,cx+20,cy-5-(3 if smirk else 0))
+            p.drawPath(line)
+            if gap:
+                p.setPen(Qt.NoPen);p.setBrush(color)
+                p.drawEllipse(QRectF(cx-10,cy+3,20,max(5,gap)))
         else:
-            path.moveTo(cx-10,cy); path.quadTo(cx,cy+4,cx+10,cy); p.drawPath(path)
+            if gap:
+                p.setPen(Qt.NoPen);p.setBrush(color)
+                p.drawRoundedRect(QRectF(cx-12,cy-gap/2,24,max(5,gap)),10,10)
+            else:
+                line = QPainterPath()
+                line.moveTo(cx-16,cy)
+                line.quadTo(cx,cy+(12 if happy else (-6 if e == 'worried' else 4)),cx+16,cy-(7 if smirk else 0))
+                p.drawPath(line)
         p.restore()
         p.end()
