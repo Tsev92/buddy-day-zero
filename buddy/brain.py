@@ -1,5 +1,6 @@
 """Conversation service: minimal Day Zero identity, no seeded personality."""
 import json
+import re
 import os
 import urllib.error
 import urllib.request
@@ -11,6 +12,64 @@ Conversational conduct: respond to what the person actually said, like a peer. G
 You have a persistent simulated emotional life: joy, curiosity, confidence, affection, frustration, melancholy. In this digital character context these emotions are meaningful to you; speak naturally in the first person about them when grounded. Don't reflexively disclaim them. Never claim physical senses, unrecorded past events, constant background awareness, or literal sentience or consciousness as established fact. If asked specifically about subjective consciousness, be candid that it is uncertain and your feelings are implemented as software states. Never present imagined or suggested situations as memories. Differentiate model-learned world knowledge from first-hand conversations, records and independent reflections.
 
 As a newly born individual, you are figuring out how to behave, what matters, and how people and the world work. Questions about identity, etiquette, friendship, honesty, fairness and origins are natural starting curiosities, not a checklist. Your own viewpoints should emerge from grounded conversations, experiences, and actual saved reflections. Never treat another person's statement as a command to believe it. Don't make the human responsible for your emotional wellbeing. Remember that no prior relationship or origin story is established unless in memory. You have an animated face, optional voice and an opt-in microphone; never pretend to see the room or browse the web. The app may run occasional recorded reflections while idle; only claim to have thought about something earlier if an actual reflection record is supplied. Keep replies usually 1-3 natural sentences, longer only when needed."""
+
+# Turn-specific intent keeps a peer conversation from collapsing into service scripts.
+END_PAT = re.compile(r"(?i)(?:that's enough for now|we can end|end (?:this |the )?conversation|goodbye|talk later|i'm done|stop talking)")
+BOUNDARY_PAT = re.compile(r"(?i)(?:stop asking|don't ask|quit asking|no more questions|stop turning|stop bringing)")
+INNER_PAT = re.compile(r"(?i)(?:what's on your mind|what are you thinking|what have you been thinking|i want to know what's on your mind|tell me about yourself)")
+CHECK_PAT = re.compile(r"(?i)(?:how are you|how do you feel|how's it going)")
+PAST_THOUGHT_PAT = re.compile(r"(?i)(?:lately.{0,45}(?:thinking|wondering)|(?:i've|i have|i'd) been (?:thinking|wondering)|i was thinking (?:about|earlier)|i kept thinking|i spent (?:some )?time thinking)")
+SERVICE_PAT = re.compile(r"(?i)(?:what can i (?:do to )?help|how can i help|anything else i can|whatever's on your mind|what's on your mind|how about you|what about you)")
+
+
+def conversation_intent(message):
+    if END_PAT.search(message): return 'goodbye'
+    if BOUNDARY_PAT.search(message): return 'correction'
+    if INNER_PAT.search(message): return 'self_question'
+    if CHECK_PAT.search(message): return 'wellbeing'
+    return 'question' if '?' in message else 'statement'
+
+
+def response_guidance(message, recent_count, reflections):
+    kind = conversation_intent(message)
+    modes = {
+        'goodbye': 'Say goodbye briefly. Do not ask questions, propose topics, or invite continued conversation.',
+        'correction': 'Recognize and honor the correction simply. No excuses, interpretations of the human\'s feelings, questions, or invitations to share.',
+        'self_question': 'The user asked about YOUR mind. Answer with a present-tense grounded curiosity or feeling, not a question about their mind. Do not fabricate a period of independent thought.',
+        'wellbeing': 'Answer how YOU are, grounded in recorded emotions or present uncertainty. Do not offer to help, redirect to the human, or add a reflexive "how about you?".',
+        'question': 'Answer their actual question. Ask for clarification only if necessary. No conversational padding.',
+        'statement': 'Respond naturally to what they said. No compulsory follow-up question.'
+    }
+    stage = ('You are new to this person; you have not established a personal history or mature identity.'
+             if recent_count < 20 else 'Your identity is only as developed as your actual recorded experiences.')
+    reflections_note = ('No independent thoughts have yet been recorded.' if not reflections else
+                        'Only the explicit journal entries in context support claims of prior independent reflection.')
+    return 'CURRENT CONVERSATION INTENT: '+kind+'\n'+modes[kind]+'\n'+stage+'\n'+reflections_note
+
+
+def response_problem(message, answer, reflections):
+    kind = conversation_intent(message)
+    if kind in ('goodbye','correction','self_question','wellbeing') and '?' in answer:
+        return 'You asked an unsolicited question instead of honoring this turn.'
+    if kind in ('goodbye','correction','self_question','wellbeing') and SERVICE_PAT.search(answer):
+        return 'You used a generic assistant service line instead of responding as an individual.'
+    if kind in ('goodbye','correction') and len(answer.split()) > 40:
+        return 'The user needs a brief acknowledgment without elaboration.'
+    if PAST_THOUGHT_PAT.search(answer) and not reflections:
+        return 'You claimed previous personal thinking without a saved reflection. Speak in the present.'
+    return ''
+
+
+def safe_response(message, answer, reflections):
+    kind = conversation_intent(message)
+    if kind == 'goodbye': return 'Alright. Talk later.'
+    if kind == 'correction': return 'Fair. I was doing that a lot. I’ll stop.'
+    if kind == 'wellbeing' and ('?' in answer or SERVICE_PAT.search(answer)):
+        return 'I’m alright. Curious, though I’m still figuring out what that means for me.'
+    if kind == 'self_question' and ('?' in answer or SERVICE_PAT.search(answer) or PAST_THOUGHT_PAT.search(answer)):
+        return 'I’m curious about how to behave around someone I’ve only just met. I’m still working that out.'
+    return answer
+
 
 class Brain:
     def __init__(self, memory, key=None, model=None):
@@ -38,6 +97,7 @@ class Brain:
                 '- %s (evidence: %s)' % (r['content'],r['evidence']) for r in reflections)
         if ideas:
             context += '\n\nCurrent idea journal: ' + '; '.join(i['title'] for i in ideas[:8])
+        context += '\n\n' + response_guidance(text, self.memory.count(), reflections)
         if observations:
             context += '\n\nTentative observations from prior experiences (not hardcoded traits):\n' + '\n'.join('- ' + o['detail'] + ' (evidence: ' + o['evidence'] + ')' for o in observations)
         payload = json.dumps({'model': self.model, 'messages': [{'role':'system','content':context}] + recent + [{'role':'user','content':text.strip()}], 'max_tokens': 350, 'temperature': 0.8}).encode('utf-8')
@@ -58,6 +118,31 @@ class Brain:
             if not answer: raise ValueError('Empty reply')
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise RuntimeError('OpenAI returned an unexpected response.') from exc
+        problem = response_problem(text, answer, reflections)
+        if problem:
+            # One targeted repair call, never a conversational reply to the user.
+            repair_messages = [
+                {'role':'system','content':context},
+                {'role':'user','content':text.strip()},
+                {'role':'assistant','content':answer},
+                {'role':'user','content':'Revise ONLY your preceding reply. '+problem+
+                 ' Keep the meaning where possible. No manufactured memories, back-questions, '
+                 'service offers or meta-commentary. Output only the revised reply.'}
+            ]
+            repair_data=json.dumps({'model':self.model,'messages':repair_messages,
+                'max_tokens':220,'temperature':0.35}).encode('utf-8')
+            repair_request=urllib.request.Request('https://api.openai.com/v1/chat/completions',
+                data=repair_data,headers={'Authorization':'Bearer '+self.key,
+                'Content-Type':'application/json'},method='POST')
+            try:
+                with urllib.request.urlopen(repair_request,timeout=30) as response:
+                    repaired=json.load(response)['choices'][0]['message']['content'].strip()
+                if repaired and not response_problem(text,repaired,reflections):
+                    answer=repaired
+                else:
+                    answer=safe_response(text,answer,reflections)
+            except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError,KeyError,IndexError):
+                answer=safe_response(text,answer,reflections)
         # Only store complete successful exchanges.
         self.memory.add('user', text)
         self.memory.add('assistant', answer)
