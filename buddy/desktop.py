@@ -898,6 +898,51 @@ class DesktopBuddy(QMainWindow):
         self.ideas_dialog.show()
         self.ideas_dialog.raise_()
 
+    def _maybe_reflect(self):
+        from datetime import datetime, timezone
+        if not self._settings.value('mind/reflect_enabled',True,type=bool):
+            return
+        if self.reflection_thread is not None or self.update_thread is not None:
+            return
+        if self.chat_dialog is not None:
+            chat = self.chat_dialog
+            if chat.mic_recording or chat.worker_thread is not None or chat.voice_thread is not None:
+                return
+        date = datetime.now(timezone.utc).date().isoformat()
+        if self.memory.reflection_calls_today(date) >= int(self._settings.value('mind/daily_limit',4)):
+            return
+        if not self.memory.reflection_due():
+            return
+        self.reflection_thread = QThread(self)
+        self.reflection_worker = ReflectTask(self.brain,self.memory)
+        self.reflection_worker.moveToThread(self.reflection_thread)
+        self.reflection_thread.started.connect(self.reflection_worker.run)
+        self.reflection_worker.finished.connect(self._reflection_ready)
+        self.reflection_worker.failed.connect(self._reflection_failed)
+        self.reflection_worker.finished.connect(self.reflection_thread.quit)
+        self.reflection_worker.failed.connect(self.reflection_thread.quit)
+        self.reflection_thread.finished.connect(self._reflection_cleanup)
+        self.reflection_thread.start()
+
+    def _reflection_ready(self, did_reflect):
+        if did_reflect:
+            self.setToolTip('Buddy saved a new reflection · Open his Character Sheet')
+            if self.character_dialog is not None and self.character_dialog.isVisible():
+                self.character_dialog.refresh()
+            if self.ideas_dialog is not None and self.ideas_dialog.isVisible():
+                self.ideas_dialog.refresh()
+
+    def _reflection_failed(self, error):
+        self.setToolTip('Reflection unavailable: '+str(error)[:120])
+
+    def _reflection_cleanup(self):
+        self.reflection_worker.deleteLater()
+        self.reflection_thread.deleteLater()
+        self.reflection_worker=self.reflection_thread=None
+        if getattr(self,'_close_after_reflection',False):
+            self._close_after_reflection=False
+            QTimer.singleShot(0,self.close)
+
     def _wake_warning(self, message):
         self.setToolTip('Wake phrase unavailable: ' + message)
 
