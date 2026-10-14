@@ -35,7 +35,7 @@ VISUAL_REFERENCES = re.compile(
     r"what(?:'s| is) (?:this|that|in my hand|on my desk|behind me)|"
     r"what color (?:is |are )?(?:my|this|that)|what am i wearing|"
     r"my (?:shirt|haircut|outfit)|can you read|what does this say|"
-    r"do you like (?:my|this)|how do i look)\b)"
+    r"do you like (?:my|this)|how do i look)\b"
 )
 
 
