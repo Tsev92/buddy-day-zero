@@ -558,9 +558,37 @@ class PresentationTests(unittest.TestCase):
         self.assertFalse(allowed.may_capture(True,False))
         self.assertTrue(allowed.may_capture(True,True))
         self.assertTrue(relevant_to_camera('How many fingers am I holding up?'))
+        self.assertTrue(relevant_to_camera("whats in my hand?"))
+        self.assertTrue(relevant_to_camera("what's in my hand?"))
+        self.assertTrue(relevant_to_camera("what’s in my hand?"))
+        self.assertTrue(relevant_to_camera("what is in my hand?"))
+        self.assertTrue(relevant_to_camera("what am I holding?"))
+        self.assertTrue(relevant_to_camera("what do I have here?"))
         self.assertTrue(relevant_to_camera('Buddy, what do you think of my haircut?'))
         self.assertFalse(relevant_to_camera("I'm having a bad day."))
         self.assertFalse(relevant_to_camera("What is the meaning of friendship?"))
+
+    def test_visual_question_capture_error_is_visible_and_does_not_call_brain(self):
+        from buddy.desktop import ChatDialog
+        with tempfile.TemporaryDirectory() as folder:
+            memory=Memory(Path(folder))
+            buddy=DesktopBuddy(BuddyCore(Path(folder)),memory,Brain(memory))
+            dlg=ChatDialog(buddy)
+            buddy.chat_dialog=dlg
+            dlg.input.setText("whats in my hand?")
+            with patch.object(buddy,'capture_for_turn',side_effect=RuntimeError('No frame')):
+                dlg.send()
+            self.assertIn('No frame',dlg.status.text())
+            self.assertIsNone(dlg.worker_thread)
+            self.assertTrue(dlg.input.isEnabled())
+            dlg.close()
+            buddy.wake_listener.stop()
+            buddy.close()
+
+    def test_visual_context_overrides_legacy_no_camera_assumption(self):
+        from buddy.brain import SYSTEM
+        self.assertIn('optional permission-gated camera vision',SYSTEM)
+        self.assertNotIn('never pretend to see the room',SYSTEM)
 
     def test_camera_is_disabled_by_default_and_hardware_kill_switch(self):
         with tempfile.TemporaryDirectory() as folder:
